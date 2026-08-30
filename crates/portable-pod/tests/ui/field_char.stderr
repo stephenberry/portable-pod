@@ -1,0 +1,49 @@
+error[E0277]: `char` is not `Pod`, so its bytes are not portable across machines
+ --> tests/ui/field_char.rs:5:9
+  |
+5 |     ch: char,
+  |         ^^^^ the trait `Pod` is not implemented for `char`
+  |
+  = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references
+  = note: not position-independent: `usize`, `isize`, pointers, references, atomics, `Cell`/`RefCell` — use a fixed-width integer such as `u32` or `u64`
+  = note: deliberately excluded: `f32`/`f64`, because NaN payloads are not stable across targets
+  = note: for your own struct, add `#[derive(Pod)]` and `#[repr(C)]`
+  = help: the following other types implement trait `Pod`:
+            ()
+            Bit
+            Glyph
+            [T; N]
+            i128
+            i16
+            i32
+            i64
+          and $N others
+
+error[E0277]: `char` is not `Pod`, so its bytes are not portable across machines
+ --> tests/ui/field_char.rs:4:8
+  |
+4 | struct Glyph {
+  |        ^^^^^ the trait `Pod` is not implemented for `char`
+  |
+  = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references
+  = note: not position-independent: `usize`, `isize`, pointers, references, atomics, `Cell`/`RefCell` — use a fixed-width integer such as `u32` or `u64`
+  = note: deliberately excluded: `f32`/`f64`, because NaN payloads are not stable across targets
+  = note: for your own struct, add `#[derive(Pod)]` and `#[repr(C)]`
+  = help: the following other types implement trait `Pod`:
+            ()
+            Bit
+            Glyph
+            [T; N]
+            i128
+            i16
+            i32
+            i64
+          and $N others
+note: required for `Glyph` to implement `Pod`
+ --> tests/ui/field_char.rs:4:8
+  |
+4 | struct Glyph {
+  |        ^^^^^
+5 |     ch: char,
+  |         ---- unsatisfied trait bound
+  = help: consider manually implementing `Pod` to avoid undesired bounds

@@ -1,0 +1,7 @@
+error: `Pod` requires an explicit `#[repr(C)]`, `#[repr(transparent)]`, or `#[repr(C, align(N))]`. The default `repr(Rust)` may reorder fields and its layout is not guaranteed stable across compilations, so its bytes are not portable.
+ --> tests/ui/no_repr.rs:2:23
+  |
+2 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,0 +1,47 @@
+error[E0277]: `*const u32` is not `Pod`, so its bytes are not portable across machines
+ --> tests/ui/field_pointer.rs:5:9
+  |
+5 |     at: *const u32,
+  |         ^ the trait `Pod` is not implemented for `*const u32`
+  |
+  = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references
+  = note: not position-independent: `usize`, `isize`, pointers, references, atomics, `Cell`/`RefCell` — use a fixed-width integer such as `u32` or `u64`
+  = note: deliberately excluded: `f32`/`f64`, because NaN payloads are not stable across targets
+  = note: for your own struct, add `#[derive(Pod)]` and `#[repr(C)]`
+help: the trait `Pod` is implemented for `u32`
+ --> $DIR/src/lib.rs
+  |
+  |         unsafe impl Pod for $t {}
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+...
+  | impl_pod_scalar!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, ());
+  | ---------------------------------------------------------------------- in this macro invocation
+  = note: this error originates in the macro `impl_pod_scalar` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `*const u32` is not `Pod`, so its bytes are not portable across machines
+ --> tests/ui/field_pointer.rs:4:8
+  |
+4 | struct Raw {
+  |        ^^^ the trait `Pod` is not implemented for `*const u32`
+  |
+  = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references
+  = note: not position-independent: `usize`, `isize`, pointers, references, atomics, `Cell`/`RefCell` — use a fixed-width integer such as `u32` or `u64`
+  = note: deliberately excluded: `f32`/`f64`, because NaN payloads are not stable across targets
+  = note: for your own struct, add `#[derive(Pod)]` and `#[repr(C)]`
+help: the trait `Pod` is implemented for `u32`
+ --> $DIR/src/lib.rs
+  |
+  |         unsafe impl Pod for $t {}
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+...
+  | impl_pod_scalar!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, ());
+  | ---------------------------------------------------------------------- in this macro invocation
+note: required for `Raw` to implement `Pod`
+ --> tests/ui/field_pointer.rs:4:8
+  |
+4 | struct Raw {
+  |        ^^^
+5 |     at: *const u32,
+  |         - unsatisfied trait bound
+  = help: consider manually implementing `Pod` to avoid undesired bounds
+  = note: this error originates in the macro `impl_pod_scalar` (in Nightly builds, run with -Z macro-backtrace for more info)

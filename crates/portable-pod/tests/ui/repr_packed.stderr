@@ -1,0 +1,7 @@
+error: `Pod` cannot be derived for a `#[repr(packed)]` type: its fields are not necessarily aligned, so references to them are not always valid.
+ --> tests/ui/repr_packed.rs:2:23
+  |
+2 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

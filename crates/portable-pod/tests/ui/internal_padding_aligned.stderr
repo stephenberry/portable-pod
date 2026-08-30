@@ -1,0 +1,13 @@
+error[E0080]: evaluation panicked: `Padded` has padding, so it cannot be `Pod`: `size_of::<Padded>()` exceeds the sum of its field sizes, and reading a padding byte observes uninitialized memory. Under `repr(C)` each field goes at the next offset that is a multiple of its alignment, and the size is rounded up to the struct's alignment, so a gap sits before any field more aligned than the offset it would otherwise take, and after the last field. Fields in declaration order: a: u32, b: u64. Reorder them widest-first, or insert explicit zeroed padding fields. Always-zero padding is not an escape: a typed copy leaves padding uninitialized however the value was built.
+ --> tests/ui/internal_padding_aligned.rs:7:23
+  |
+7 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^ evaluation of `<Padded as portable_pod::Pod>::__LAYOUT_OK` failed here
+
+note: erroneous constant encountered
+ --> tests/ui/internal_padding_aligned.rs:7:23
+  |
+7 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this note originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

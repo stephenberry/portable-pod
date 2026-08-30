@@ -1,0 +1,25 @@
+error[E0080]: evaluation panicked: `Inner` has padding, so it cannot be `Pod`: `size_of::<Inner>()` exceeds the sum of its field sizes, and reading a padding byte observes uninitialized memory. Under `repr(C)` each field goes at the next offset that is a multiple of its alignment, and the size is rounded up to the struct's alignment, so a gap sits before any field more aligned than the offset it would otherwise take, and after the last field. Fields in declaration order: a: u8, b: [u32; N]. Reorder them widest-first, or insert explicit zeroed padding fields. Always-zero padding is not an escape: a typed copy leaves padding uninitialized however the value was built.
+ --> tests/ui/array_of_padded_generic.rs:5:23
+  |
+5 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^ evaluation of `<Inner<1> as portable_pod::Pod>::__LAYOUT_OK` failed here
+
+note: erroneous constant encountered
+ --> $DIR/src/lib.rs
+  |
+  |     const __LAYOUT_OK: () = <T as Pod>::__LAYOUT_OK;
+  |                             ^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+  --> tests/ui/array_of_padded_generic.rs:15:9
+   |
+15 |     xs: [Inner<1>; 2],
+   |         ^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+  --> tests/ui/array_of_padded_generic.rs:12:23
+   |
+12 | #[derive(Clone, Copy, Pod)]
+   |                       ^^^
+   |
+   = note: this note originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

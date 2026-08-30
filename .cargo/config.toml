@@ -1,0 +1,4 @@
+# Run wasm32 tests under wasmtime so the portability suite can actually execute on a 32-bit
+# target. Without this `cargo test --target wasm32-wasip1` builds but cannot run.
+[target.wasm32-wasip1]
+runner = "wasmtime"

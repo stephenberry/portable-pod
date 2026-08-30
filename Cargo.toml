@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/portable-pod", "crates/portable-pod-derive"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/stephenberry/portable-pod"
+rust-version = "1.96"
+authors = ["Stephen Berry"]
+
+[workspace.dependencies]
+portable-pod = { path = "crates/portable-pod", version = "0.1.0" }
+portable-pod-derive = { path = "crates/portable-pod-derive", version = "0.1.0" }

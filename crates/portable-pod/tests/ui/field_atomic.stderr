@@ -1,0 +1,75 @@
+error[E0204]: the trait `Copy` cannot be implemented for this type
+ --> tests/ui/field_atomic.rs:4:8
+  |
+2 | #[derive(Clone, Copy, Pod)]
+  |                 ---- in this derive macro expansion
+3 | #[repr(C)]
+4 | struct Counter {
+  |        ^^^^^^^
+5 |     hits: core::sync::atomic::AtomicU32,
+  |     ----------------------------------- this field does not implement `Copy`
+
+error[E0277]: `Atomic<u32>` is not `Pod`, so its bytes are not portable across machines
+ --> tests/ui/field_atomic.rs:5:11
+  |
+5 |     hits: core::sync::atomic::AtomicU32,
+  |           ^^^^ the trait `Pod` is not implemented for `Atomic<u32>`
+  |
+  = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references
+  = note: not position-independent: `usize`, `isize`, pointers, references, atomics, `Cell`/`RefCell` — use a fixed-width integer such as `u32` or `u64`
+  = note: deliberately excluded: `f32`/`f64`, because NaN payloads are not stable across targets
+  = note: for your own struct, add `#[derive(Pod)]` and `#[repr(C)]`
+  = help: the following other types implement trait `Pod`:
+            ()
+            Bit
+            Counter
+            [T; N]
+            i128
+            i16
+            i32
+            i64
+          and $N others
+
+error[E0277]: the trait bound `Atomic<u32>: Clone` is not satisfied
+ --> tests/ui/field_atomic.rs:5:5
+  |
+2 | #[derive(Clone, Copy, Pod)]
+  |          ----- in this derive macro expansion
+...
+5 |     hits: core::sync::atomic::AtomicU32,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Clone` is not implemented for `Atomic<u32>`
+  |
+note: required by a bound in `std::clone::AssertParamIsClone`
+ --> $RUST/core/src/clone.rs
+  |
+  | pub struct AssertParamIsClone<T: Clone + PointeeSized> {
+  |                                  ^^^^^ required by this bound in `AssertParamIsClone`
+
+error[E0277]: `Atomic<u32>` is not `Pod`, so its bytes are not portable across machines
+ --> tests/ui/field_atomic.rs:4:8
+  |
+4 | struct Counter {
+  |        ^^^^^^^ the trait `Pod` is not implemented for `Atomic<u32>`
+  |
+  = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references
+  = note: not position-independent: `usize`, `isize`, pointers, references, atomics, `Cell`/`RefCell` — use a fixed-width integer such as `u32` or `u64`
+  = note: deliberately excluded: `f32`/`f64`, because NaN payloads are not stable across targets
+  = note: for your own struct, add `#[derive(Pod)]` and `#[repr(C)]`
+  = help: the following other types implement trait `Pod`:
+            ()
+            Bit
+            Counter
+            [T; N]
+            i128
+            i16
+            i32
+            i64
+          and $N others
+note: required for `Counter` to implement `Pod`
+ --> tests/ui/field_atomic.rs:4:8
+  |
+4 | struct Counter {
+  |        ^^^^^^^
+5 |     hits: core::sync::atomic::AtomicU32,
+  |           ---- unsatisfied trait bound
+  = help: consider manually implementing `Pod` to avoid undesired bounds

@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Three runners across two architectures: ubuntu and windows are x86_64, macos is
+        # aarch64. That is what makes the portability suite compare real architectures rather
+        # than one machine against itself -- note it rests on macos-latest being ARM, which is
+        # true today and is not pinned by anything here.
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace --all-features
+
+  # The layout proof for a generic type is a post-monomorphization error, so `cargo check` cannot
+  # see it. Nothing here may be reduced to `cargo check` without silently weakening the guarantee.
+  portability:
+    name: portability / wasm32 (32-bit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
+      # The point of the whole crate: a 32-bit target must agree byte-for-byte with the 64-bit
+      # hosts above. A `usize` field anywhere would break this and nothing else would notice.
+      - run: cargo test --target wasm32-wasip1 --test portability
+
+  # `#![no_std]` at the crate root is self-enforcing: any use of `std` fails to compile on every
+  # target, and the zero-dependency job rules out a dep dragging `std` in. So this is the feature
+  # matrix, not a `no_std` proof. Proving it on a target where `std` does not exist needs a
+  # bare-metal target back in the matrix.
+  feature_matrix:
+    name: feature matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build -p portable-pod --no-default-features
+      - run: cargo build -p portable-pod --no-default-features --features derive
+      - run: cargo build -p portable-pod --no-default-features --features alloc
+      # Build is not enough: without these, `Bit`, `bytes_of` and `read_pod` are compiled but
+      # never executed at any non-default feature setting. (`--test derive` needs `alloc` for
+      # `boxed_zeroed`, so at that point the combination is just the default one, which the
+      # `test` job above already covers.)
+      - run: cargo test -p portable-pod --no-default-features --lib
+      - run: cargo test -p portable-pod --no-default-features --features alloc --lib
+
+  zero_dependency:
+    name: zero dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # A crate whose value proposition is "your bytes depend on nothing" cannot itself depend on
+      # things. This is asserted three ways, because the interesting case is the one that used to
+      # be exempt: the `derive` feature is on by default, and while it pulled proc-macro2 and quote
+      # a bare `--no-default-features` check could pass while the default build pulled three crates.
+      # `proc_macro` is a sysroot crate, so the derive needs nothing either, and the guarantee is
+      # now unconditional. Keep it that way: adding `syn`, `quote` or `proc-macro2` back fails here.
+      - name: assert zero dependencies, in every configuration
+        run: |
+          check() {
+            tree="$(cargo tree -e normal --prefix none "$@" | grep -v '^$' | sort -u)"
+            n="$(echo "$tree" | wc -l | tr -d ' ')"
+            if [ "$n" -ne "$2" ]; then
+              echo "::error::expected $2 crate(s) for 'cargo tree $*', got $n:"
+              echo "$tree"
+              exit 1
+            fi
+          }
+          # the runtime crate alone
+          check -p portable-pod --no-default-features 1
+          # the derive alone: no proc-macro2, no quote, no syn
+          check -p portable-pod-derive 1
+          # everything: portable-pod plus its own derive, and nothing third-party
+          check -p portable-pod --all-features 2
+
+  miri:
+    name: miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      # Every `unsafe` block in this crate is a raw-pointer byte view or an in-place allocation.
+      # Miri is what says they are sound, rather than the comments above them.
+      #
+      # Name each target explicitly rather than running `--lib`. This job used to be `--lib`
+      # alone, and it passed green while `tests/derive.rs` contained a genuine read of
+      # uninitialized memory -- an integration target is not covered by `--lib`. `compile_fail`
+      # is excluded because the compile-fail harness shells out to cargo, which is not a thing to
+      # run under Miri.
+      - run: cargo miri test -p portable-pod --lib --all-features
+      - run: cargo miri test -p portable-pod --test derive --all-features
+      - run: cargo miri test -p portable-pod --test portability --all-features
+
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+      # This crate tracks recent Rust deliberately. The version here is a choice, not a floor
+      # derived from the features used, so raise it whenever you like -- this job exists to keep
+      # `rust-version` honest, not to hold the number down.
+      - run: cargo build --workspace --all-features
+      # `cargo build` compiles no `#[derive(Pod)]` invocation: `src/` contains none outside doc
+      # comments. The generated code's MSRV is only exercised by compiling something that uses
+      # the derive, which is what this does.
+      - run: cargo test --workspace --all-features --no-run
+
+  lint:
+    name: fmt and clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features
+      - run: cargo doc --workspace --all-features --no-deps

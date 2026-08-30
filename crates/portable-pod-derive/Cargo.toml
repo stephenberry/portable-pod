@@ -1,0 +1,35 @@
+[package]
+name = "portable-pod-derive"
+description = "Derive macro for portable-pod. Proves the Pod contract at compile time."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+# INTENTIONALLY EMPTY AND MUST STAY EMPTY.
+#
+# `proc_macro` is a sysroot crate, so this derive needs no third-party code at all — which lets
+# `portable-pod` claim zero dependencies without a footnote about the default `derive` feature.
+# CI asserts that `cargo tree -e normal --all-features` over the workspace lists only these two
+# crates.
+#
+# No `syn`: this derive never inspects a field type. A type is captured as an opaque token run and
+# re-emitted into `size_of::<...>()` and a where-clause bound, nothing more.
+#
+# No `proc-macro2` or `quote` either. `proc-macro2` exists mainly so expansion logic can run
+# outside a proc-macro invocation, where `proc_macro`'s types panic; that buys unit tests of
+# `expand`, which this crate does not have and does not want — it is tested through the compiled
+# macro by `portable-pod`'s `tests/derive.rs` and compile-fail fixtures, which exercise the real
+# thing. `quote` is sugar, replaced by `lex` over format strings.
+
+[dev-dependencies]
+# A dev-dependency cycle, which Cargo permits: it exists only so this crate's doc examples can
+# `use portable_pod::…` and therefore actually compile. Without it the examples would have to be
+# ```ignore```, and an ignored example is one nobody notices going stale.
+portable-pod = { path = "../portable-pod" }

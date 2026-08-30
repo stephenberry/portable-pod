@@ -1,0 +1,7 @@
+error: `Pod` cannot be derived for an enum: a discriminant makes most bit patterns invalid, so an enum can never satisfy the any-bit-pattern clause. Use an integer field plus accessors, or a `#[repr(transparent)]` newtype over an integer.
+ --> tests/ui/is_enum.rs:2:23
+  |
+2 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

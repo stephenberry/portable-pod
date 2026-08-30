@@ -1,0 +1,49 @@
+error[E0277]: `f32` is not `Pod`, so its bytes are not portable across machines
+ --> tests/ui/field_f32.rs:6:8
+  |
+6 |     x: f32,
+  |        ^^^ the trait `Pod` is not implemented for `f32`
+  |
+  = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references
+  = note: not position-independent: `usize`, `isize`, pointers, references, atomics, `Cell`/`RefCell` — use a fixed-width integer such as `u32` or `u64`
+  = note: deliberately excluded: `f32`/`f64`, because NaN payloads are not stable across targets
+  = note: for your own struct, add `#[derive(Pod)]` and `#[repr(C)]`
+  = help: the following other types implement trait `Pod`:
+            i128
+            i16
+            i32
+            i64
+            i8
+            u128
+            u16
+            u32
+          and $N others
+
+error[E0277]: `f32` is not `Pod`, so its bytes are not portable across machines
+ --> tests/ui/field_f32.rs:5:8
+  |
+5 | struct Point {
+  |        ^^^^^ the trait `Pod` is not implemented for `f32`
+  |
+  = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references
+  = note: not position-independent: `usize`, `isize`, pointers, references, atomics, `Cell`/`RefCell` — use a fixed-width integer such as `u32` or `u64`
+  = note: deliberately excluded: `f32`/`f64`, because NaN payloads are not stable across targets
+  = note: for your own struct, add `#[derive(Pod)]` and `#[repr(C)]`
+  = help: the following other types implement trait `Pod`:
+            i128
+            i16
+            i32
+            i64
+            i8
+            u128
+            u16
+            u32
+          and $N others
+note: required for `Point` to implement `Pod`
+ --> tests/ui/field_f32.rs:5:8
+  |
+5 | struct Point {
+  |        ^^^^^
+6 |     x: f32,
+  |        --- unsatisfied trait bound
+  = help: consider manually implementing `Pod` to avoid undesired bounds

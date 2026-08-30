@@ -1,0 +1,32 @@
+error[E0277]: `&u32` is not `Pod`, so its bytes are not portable across machines
+  --> tests/ui/field_reference.rs:12:22
+   |
+12 |     let _ = bytes_of(&Borrowed { slot: &n });
+   |             -------- ^^^^^^^^^^^^^^^^^^^^^^ the trait `Pod` is not implemented for `&u32`
+   |             |
+   |             required by a bound introduced by this call
+   |
+   = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references
+   = note: not position-independent: `usize`, `isize`, pointers, references, atomics, `Cell`/`RefCell` — use a fixed-width integer such as `u32` or `u64`
+   = note: deliberately excluded: `f32`/`f64`, because NaN payloads are not stable across targets
+   = note: for your own struct, add `#[derive(Pod)]` and `#[repr(C)]`
+note: required for `Borrowed<'_>` to implement `Pod`
+  --> tests/ui/field_reference.rs:5:23
+   |
+ 5 | #[derive(Clone, Copy, Pod)]
+   |                       ^^^
+...
+ 8 |     slot: &'a u32,
+   |           - unsatisfied trait bound
+   = help: consider manually implementing `Pod` to avoid undesired bounds
+note: required by a bound in `bytes_of`
+  --> $DIR/src/bytes.rs
+   |
+   | pub fn bytes_of<T: Pod>(v: &T) -> &[u8] {
+   |                    ^^^ required by this bound in `bytes_of`
+   = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider removing the leading `&`-reference
+   |
+12 -     let _ = bytes_of(&Borrowed { slot: &n });
+12 +     let _ = bytes_of(Borrowed { slot: &n });
+   |

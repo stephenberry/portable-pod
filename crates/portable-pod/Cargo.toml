@@ -1,0 +1,49 @@
+[package]
+name = "portable-pod"
+description = "Plain-old-data types with a target-independent layout. Like bytemuck, but excludes usize, so a value has the same size and field offsets on every target."
+categories = ["no-std", "encoding", "game-development"]
+keywords = ["pod", "bytes", "determinism", "no_std", "layout"]
+readme = "../../README.md"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+# The runtime crate must stay zero-dependency: a crate whose entire value proposition is
+# "your bytes depend on nothing" cannot itself depend on things. CI asserts this
+# (`cargo tree -e normal` is one line). The derive is optional and is a proc-macro, so it
+# is a compile-time input rather than something that links into your binary.
+portable-pod-derive = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The compile-fail harness. Chosen over `trybuild` for two reasons that both matter here.
+#
+# It has no dependencies of its own, dev-dependencies included, so `cargo test` on this crate
+# builds nothing third-party either — the zero-dependency claim now covers the test suite too, and
+# an MSRV job no longer breaks because a transitive dep of the harness bumped its edition.
+#
+# More importantly it drives `cargo build`, not `cargo check`, so it reaches codegen. This crate's
+# layout proof for a *generic* type is an associated const, and that is a post-monomorphization
+# error — invisible to a type-checking harness. `tests/ui/padded_generic_instantiation.rs` is the
+# fixture that was impossible before.
+#
+# `0.3` is the floor rather than `0.2` for the `$N` in the goldens: an implementor count is a fact
+# about the crate graph, not about the fixture asserting it, so adding one `Pod` axiom impl used to
+# move that number in nine goldens at once — every one of them testing something else.
+nocompile = "0.3"
+
+[features]
+default = ["derive", "alloc"]
+derive = ["dep:portable-pod-derive"]
+alloc = []
+# Build for a big-endian target anyway, taking the layout guarantees without the byte-identity
+# one. Off by default because the silent version of this is the failure the crate exists to
+# prevent: see the `compile_error!` in `src/lib.rs`. Features unify across a dependency graph, so
+# one crate enabling this enables it for all of them.
+allow-big-endian = []
+
+[package.metadata.docs.rs]
+all-features = true
