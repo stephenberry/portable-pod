@@ -56,6 +56,53 @@
 //! }
 //! ```
 //!
+//! A generic type does not have to declare `Copy` on its own parameters. The derive discharges
+//! the `Pod: Copy` obligation itself, so bounds can live on the impls:
+//!
+//! ```
+//! # use portable_pod::Pod;
+//! #[derive(Clone, Copy, Pod)]
+//! #[repr(C)]
+//! struct Table<K, V, const CAP: usize> {
+//!     keys: [K; CAP],
+//!     vals: [V; CAP],
+//!     len: u32,
+//!     _pad: u32,
+//! }
+//! ```
+//!
+//! # Re-exporting `Pod` from your own crate
+//!
+//! A library that gives its users one vocabulary will want to re-export the trait. The trait
+//! re-exports like anything else, but the **derive** needs to be told where it went: its
+//! expansion names `::portable_pod::Pod`, which does not resolve in a crate that depends on your
+//! library rather than on this one. Name the path with `#[pod(crate = ...)]`:
+//!
+//! ```
+//! use portable_pod::Pod;
+//!
+//! // Stand-in for the re-exporting library: `pub use portable_pod::Pod;` is all it needs.
+//! mod my_engine {
+//!     pub mod mem {
+//!         pub use portable_pod::Pod;
+//!     }
+//! }
+//!
+//! #[derive(Clone, Copy, Pod)]
+//! #[repr(C)]
+//! #[pod(crate = crate::my_engine::mem)]
+//! struct Wire {
+//!     id: u64,
+//!     kind: u32,
+//!     flags: u32,
+//! }
+//!
+//! fn main() {}
+//! ```
+//!
+//! The value is a path, not a string. Only the `Pod` trait has to be reachable there; it is the
+//! only item the expansion names.
+//!
 //! # What "portable" does and does not mean
 //!
 //! The guarantee is about **layout**: size, field offsets, the absence of padding, and the
@@ -178,6 +225,9 @@ pub use boxed::{boxed_zeroed, boxed_zeroed_with};
 /// field is itself `Pod`. Rejects enums, unions, `#[repr(packed)]`, and any layout with padding.
 ///
 /// There is no opt-out for padding; see the macro's own documentation for why.
+///
+/// Accepts one attribute, `#[pod(crate = <path>)]`, naming the path that exports [`Pod`] when it
+/// is reached through a re-export rather than as `::portable_pod`.
 #[cfg(feature = "derive")]
 pub use portable_pod_derive::Pod;
 

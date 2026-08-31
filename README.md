@@ -84,6 +84,39 @@ struct Ring<const N: usize> {
 }
 ```
 
+A generic type does not have to declare `Copy` on its own parameters; the derive discharges the `Pod: Copy` obligation itself, so bounds can live on the impls where they usually belong.
+
+## Re-exporting `Pod` from your own crate
+
+A library that wants to give its users one vocabulary will re-export the trait. The trait re-exports like anything else — but the **derive** has to be told where it went, because its expansion names `::portable_pod::Pod`, which does not resolve in a crate that depends on *your* library rather than on this one. Without it, your users get ``cannot find `portable_pod` in the crate root``.
+
+`#[pod(crate = ...)]` names the path:
+
+```rust
+use portable_pod::Pod;
+
+// Stand-in for the re-exporting library. `pub use portable_pod::Pod;` is all it needs —
+// the trait is the only item the expansion names.
+mod my_engine {
+    pub mod mem {
+        pub use portable_pod::Pod;
+    }
+}
+
+#[derive(Clone, Copy, Pod)]
+#[repr(C)]
+#[pod(crate = crate::my_engine::mem)]
+struct Wire {
+    id: u64,
+    kind: u32,
+    flags: u32,
+}
+
+fn main() {}
+```
+
+The value is a **path**, not a string. `serde` and `bytemuck` spell their equivalents with quotes; writing quotes here is an error that tells you to drop them.
+
 ## Two things to know
 
 **Big-endian targets are refused, not caveated.** `bytes_of` gives you the native representation, so on a big-endian target a `u32`'s bytes would disagree with every little-endian peer — the same across-machine disagreement this crate exists to prevent, and just as invisible to a test suite running on one target. So the crate does not compile there:
