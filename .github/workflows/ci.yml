@@ -24,7 +24,14 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+      # `rust-src` is load-bearing, not incidental. A golden whose diagnostic reaches into `core`
+      # records the standard library's own source rows, and rustc renders those only where this
+      # component is installed -- so `tests/ui/field_atomic.stderr`, blessed on a machine that has
+      # it, cannot match a runner that does not. `nocompile` cannot normalize this away and says so
+      # when it bites; see its README. A `--profile minimal` toolchain omits the component.
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-src
       - run: cargo test --workspace --all-features
 
   # The layout proof for a generic type is a post-monomorphization error, so `cargo check` cannot

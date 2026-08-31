@@ -30,10 +30,14 @@ portable-pod-derive = { workspace = true, optional = true }
 # error — invisible to a type-checking harness. `tests/ui/padded_generic_instantiation.rs` is the
 # fixture that was impossible before.
 #
-# `0.3` is the floor rather than `0.2` for the `$N` in the goldens: an implementor count is a fact
+# `0.4` is the floor for the Windows path separators: before it, rustc's `src\bin\<name>.rs`
+# never matched the harness's `src/bin/<name>.rs`, so the fixture's own span went unrecognized and
+# every golden here mismatched at its first diagnostic on the Windows runner.
+#
+# `0.3` was the floor before that, rather than `0.2`, for the `$N` in the goldens: an implementor count is a fact
 # about the crate graph, not about the fixture asserting it, so adding one `Pod` axiom impl used to
 # move that number in nine goldens at once — every one of them testing something else.
-nocompile = "0.3"
+nocompile = "0.4"
 
 [features]
 default = ["derive", "alloc"]
