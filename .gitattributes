@@ -1,0 +1,4 @@
+# The compile-fail goldens are compared byte-for-byte against text the harness generates with LF
+# endings. A CRLF checkout makes every one of them mismatch on Windows, and does it invisibly: the
+# diff in the failure report is line-based, so it renders no difference at all. Pin the endings.
+*.stderr text eol=lf
