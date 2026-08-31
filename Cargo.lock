@@ -4,9 +4,9 @@ version = 4
 
 [[package]]
 name = "nocompile"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7326b2d36a078f26ffdd1652bbb37d2692963c98afd49f0d49a01c02521d8146"
+checksum = "2ea1cd8a3acfd16db98b557348711772b151166192c5250392601178e5eab257"
 
 [[package]]
 name = "portable-pod"

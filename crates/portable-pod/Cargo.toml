@@ -30,19 +30,13 @@ portable-pod-derive = { workspace = true, optional = true }
 # error — invisible to a type-checking harness. `tests/ui/padded_generic_instantiation.rs` is the
 # fixture that was impossible before.
 #
-# `0.5` is the floor: it unifies a golden's line endings before comparing, so a CRLF checkout on
-# Windows no longer fails all 21 goldens at once -- invisibly, since the diff in the report is
-# line-based and renders no difference at all. `.gitattributes` pins the endings here as well, so
-# this is belt-and-braces; a floor that names the reason is still worth more than one that only
-# happens to work.
-#
-# Earlier floors, if this is ever lowered: `0.4` folds Windows path separators, without which
-# rustc's `src\bin\<name>.rs` never matched the harness's `src/bin/<name>.rs` and every golden
-# mismatched at its first diagnostic on Windows. `0.3` normalizes an implementor count to `$N`,
-# which is a fact about the crate graph rather than about the fixture asserting it: adding one
-# `Pod` axiom impl used to move that number in nine goldens at once, every one of them testing
-# something else.
-nocompile = "0.5"
+# The floor tracks the newest release. Every one since 0.3 has fixed something that made a golden
+# disagree between two machines rather than between two versions of this crate: an implementor
+# count, Windows path separators, a CRLF checkout, a sysroot under a directory whose name has a
+# space in it. None of them change what a fixture asserts, so tracking the newest costs no
+# re-blessing and is what keeps this suite reproducible for a contributor whose machine is not
+# shaped like CI's. The dependency's git history has the details.
+nocompile = "0.6"
 
 [features]
 default = ["derive", "alloc"]
