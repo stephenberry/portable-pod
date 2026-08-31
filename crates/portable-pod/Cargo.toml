@@ -30,14 +30,19 @@ portable-pod-derive = { workspace = true, optional = true }
 # error — invisible to a type-checking harness. `tests/ui/padded_generic_instantiation.rs` is the
 # fixture that was impossible before.
 #
-# `0.4` is the floor for the Windows path separators: before it, rustc's `src\bin\<name>.rs`
-# never matched the harness's `src/bin/<name>.rs`, so the fixture's own span went unrecognized and
-# every golden here mismatched at its first diagnostic on the Windows runner.
+# `0.5` is the floor: it unifies a golden's line endings before comparing, so a CRLF checkout on
+# Windows no longer fails all 21 goldens at once -- invisibly, since the diff in the report is
+# line-based and renders no difference at all. `.gitattributes` pins the endings here as well, so
+# this is belt-and-braces; a floor that names the reason is still worth more than one that only
+# happens to work.
 #
-# `0.3` was the floor before that, rather than `0.2`, for the `$N` in the goldens: an implementor count is a fact
-# about the crate graph, not about the fixture asserting it, so adding one `Pod` axiom impl used to
-# move that number in nine goldens at once — every one of them testing something else.
-nocompile = "0.4"
+# Earlier floors, if this is ever lowered: `0.4` folds Windows path separators, without which
+# rustc's `src\bin\<name>.rs` never matched the harness's `src/bin/<name>.rs` and every golden
+# mismatched at its first diagnostic on Windows. `0.3` normalizes an implementor count to `$N`,
+# which is a fact about the crate graph rather than about the fixture asserting it: adding one
+# `Pod` axiom impl used to move that number in nine goldens at once, every one of them testing
+# something else.
+nocompile = "0.5"
 
 [features]
 default = ["derive", "alloc"]
