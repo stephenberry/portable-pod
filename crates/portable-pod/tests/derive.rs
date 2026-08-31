@@ -53,6 +53,20 @@ struct Aligned {
     b: [u64; 2],
 }
 
+/// Type parameters with **no `Copy` bound of their own**, which is the common style: bounds go on
+/// the impls, not the struct. `Pod: Copy` still has to be discharged, and the field-type bounds do
+/// not supply it. This failed to compile before the derive emitted `Self: Copy`. `Queue` and
+/// `Guarded` below both happen to declare `T: Copy` inline, which is exactly why they did not
+/// catch it.
+#[derive(Clone, Copy, PartialEq, Debug, Pod)]
+#[repr(C)]
+struct Unbounded<K, V, const CAP: usize> {
+    keys: [K; CAP],
+    vals: [V; CAP],
+    len: u32,
+    _pad: u32,
+}
+
 /// An existing `where` clause must survive, with the derive's bounds appended.
 #[derive(Clone, Copy, PartialEq, Debug, Pod)]
 #[repr(C)]
@@ -228,4 +242,98 @@ mod parser_regressions {
         assert_eq!(bytes_of(&JointDefault::<u32>(3)).len(), 4);
         assert_eq!(bytes_of(&AttrOnParam::<u8>(1)).len(), 1);
     }
+}
+
+#[test]
+fn type_parameters_need_no_copy_bound_on_the_struct() {
+    // The `Pod: Copy` supertrait is discharged by the derive's own `K: Copy, V: Copy` predicates.
+    let m: Unbounded<u64, u64, 4> = zeroed();
+    assert_eq!(bytes_of(&m).len(), 4 * 8 + 4 * 8 + 4 + 4);
+    // Still checked per instantiation, and still padding-free for these.
+    assert_eq!(bytes_of(&zeroed::<Unbounded<u32, u32, 2>>()).len(), 24);
+    assert_eq!(bytes_of(&zeroed::<Unbounded<u16, u16, 2>>()).len(), 16);
+    // (`Unbounded<u8, u8, 3>` is *not* in this list: the `u8` arrays leave `len` misaligned, so
+    // it has a two-byte gap and its proof correctly refuses to compile.)
+}
+
+/// `#[pod(crate = ...)]` roots the expansion somewhere other than `::portable_pod`, so a crate
+/// that re-exports the trait can hand its own users a working derive. Here the "re-export" is a
+/// module, which is enough to prove the emitted paths follow the attribute rather than the
+/// hardcoded default: if any single reference still said `::portable_pod`, this would still
+/// compile, so the case that actually pins it is `tests/ui/pod_crate_wrong_path.rs`, where the
+/// named path does *not* export `Pod` and every reference must therefore fail.
+mod reexport {
+    pub use portable_pod::Pod;
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Pod)]
+#[repr(C)]
+#[pod(crate = crate::reexport)]
+struct ViaReexport {
+    id: u64,
+    kind: u32,
+    flags: u32,
+}
+
+/// The attribute must work for a generic type too: that is the path through the field bounds,
+/// the transitive `__LAYOUT_OK` inheritance, and the `Copy` predicates all at once.
+#[derive(Clone, Copy, PartialEq, Debug, Pod)]
+#[repr(C)]
+#[pod(crate = crate::reexport)]
+struct GenericViaReexport<T, const N: usize> {
+    items: [T; N],
+    len: u32,
+    _pad: u32,
+}
+
+#[test]
+fn crate_path_attribute_reroots_the_expansion() {
+    let v = ViaReexport {
+        id: 1,
+        kind: 2,
+        flags: 3,
+    };
+    assert_eq!(bytes_of(&v).len(), 16);
+    assert_eq!(read_pod::<ViaReexport>(bytes_of(&v)), Some(v));
+
+    let g: GenericViaReexport<u64, 3> = zeroed();
+    assert_eq!(bytes_of(&g).len(), 3 * 8 + 8);
+    // The proof is still per instantiation through the re-export.
+    assert_eq!(bytes_of(&zeroed::<GenericViaReexport<u32, 5>>()).len(), 28);
+}
+
+/// A type parameter reachable only through an **associated-type projection**, with a hand-written
+/// `Copy` impl that does not require `T: Copy`.
+///
+/// This is why the supertrait is discharged as `Self: Copy` rather than as `T: Copy` on each type
+/// parameter: the per-parameter form is sufficient but not necessary, and it rejects this. `Tag`
+/// is deliberately not `Copy`, yet `Framed<Tag>` is — so it is `Pod`, and a derive that demanded
+/// `Tag: Copy` would be inventing a requirement. The typestate/witness shape this uses is common
+/// in exactly the wire formats this crate is for.
+pub trait Wire: 'static {
+    type Word: Pod;
+}
+pub struct Tag;
+impl Wire for Tag {
+    type Word = u64;
+}
+
+#[derive(Pod)]
+#[repr(C)]
+pub struct Framed<T: Wire> {
+    w: <T as Wire>::Word,
+}
+impl<T: Wire> Clone for Framed<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T: Wire> Copy for Framed<T> {}
+
+#[test]
+fn a_parameter_behind_a_projection_need_not_be_copy() {
+    let f = Framed::<Tag> {
+        w: 0x0102_0304_0506_0708,
+    };
+    assert_eq!(bytes_of(&f).len(), 8);
 }

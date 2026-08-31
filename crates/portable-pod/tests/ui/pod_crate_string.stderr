@@ -1,0 +1,7 @@
+error: `#[pod(crate = ...)]` takes a path, not a string. Write `#[pod(crate = ::portable_pod)]` -- without the quotes.
+ --> tests/ui/pod_crate_string.rs:6:23
+  |
+6 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

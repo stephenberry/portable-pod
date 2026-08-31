@@ -1,0 +1,7 @@
+error: `crate` needs a path: write `#[pod(crate = ::my_crate)]`.
+ --> tests/ui/pod_crate_no_value.rs:4:23
+  |
+4 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

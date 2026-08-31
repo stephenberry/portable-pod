@@ -1,0 +1,7 @@
+error: unknown `#[pod]` argument `krate`. The only one is `crate`, as `#[pod(crate = ::my_crate)]`.
+ --> tests/ui/pod_unknown_key.rs:4:23
+  |
+4 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

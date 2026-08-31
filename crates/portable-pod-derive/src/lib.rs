@@ -57,6 +57,26 @@ fn delimit(delimiter: Delimiter, ts: TokenStream) -> TokenStream {
     TokenStream::from(TokenTree::Group(Group::new(delimiter, ts)))
 }
 
+/// `<prefix><crate_path><suffix>`, the way every reference to the trait is built.
+///
+/// The path is `::portable_pod` unless `#[pod(crate = ...)]` said otherwise. Nothing in the
+/// expansion may name `::portable_pod` directly: a crate that re-exports `Pod` sets this, and a
+/// single hardcoded mention would break the whole point (see the crate docs).
+///
+/// The caller respans the whole result onto the offending field where that matters, which does
+/// move the user's path tokens too — a deliberate exception to `respan`'s note above. Splicing the
+/// path in un-respanned was tried and is worse: rustc then attributes an unsatisfied bound to the
+/// derive attribute instead of to the field, which is the diagnostic this crate works hardest to
+/// get right (`tests/ui/field_usize.stderr` is the regression test, and it moved). The cost is
+/// that a typo *inside* the path is reported at the field rather than at the typo, which is the
+/// rarer mistake by far.
+fn rooted(prefix: &str, crate_path: &TokenStream, suffix: &str) -> TokenStream {
+    let mut ts = lex(prefix);
+    ts.extend(crate_path.clone());
+    ts.extend(lex(suffix));
+    ts
+}
+
 /// Derive [`Pod`], proving the contract at compile time.
 ///
 /// # What it checks
@@ -76,7 +96,17 @@ fn delimit(delimiter: Delimiter, ts: TokenStream) -> TokenStream {
 ///
 /// For a generic type the layout proof is an associated const, so it is checked **per
 /// instantiation**: `Ring<3>` and `Ring<7>` are proved separately, and neither has to be named
-/// in a test.
+/// in a test. Each of its **type** parameters is additionally bound `Copy`, which is the
+/// `Pod: Copy` supertrait obligation and nothing more — the struct itself does not have to
+/// declare `Copy` on its parameters, and most do not, preferring to put bounds on their impls.
+///
+/// # Using the derive through a re-export
+///
+/// By default the expansion names `::portable_pod::Pod`, which resolves only in a crate that
+/// depends on `portable-pod` directly under that name. A library that re-exports the trait must
+/// say where it lives with `#[pod(crate = ::my_engine::mem)]`, or its users get
+/// ``cannot find `portable_pod` in the crate root``. The value is a path, not a string, and only
+/// the `Pod` trait has to be reachable there. See the crate docs for a worked example.
 ///
 /// # Padding must be eliminated, not excused
 ///
@@ -99,7 +129,7 @@ fn delimit(delimiter: Delimiter, ts: TokenStream) -> TokenStream {
 ///     _pad: u32, // <- fills the alignment gap, so there is no padding to reason about
 /// }
 /// ```
-#[proc_macro_derive(Pod)]
+#[proc_macro_derive(Pod, attributes(pod))]
 pub fn derive_pod(input: TokenStream) -> TokenStream {
     let parsed = match parse::parse(input) {
         Ok(p) => p,
@@ -112,6 +142,12 @@ fn expand(input: &parse::Input) -> TokenStream {
     let name = &input.name;
     let decl = &input.generics_decl;
     let uses = &input.generics_use;
+    // `#[pod(crate = ...)]`, or this crate. Defaulted here rather than in `parse`, beside the
+    // four sites that consume it.
+    let root = &input
+        .crate_path
+        .clone()
+        .unwrap_or_else(|| lex("::portable_pod"));
 
     // Bound every field type. Field types, not generic parameters: an unsatisfied concrete bound
     // (`where bool: Pod`) is a hard error, and the same clause covers generic field types, so the
@@ -135,7 +171,7 @@ fn expand(input: &parse::Input) -> TokenStream {
                 .next()
                 .map_or_else(Span::call_site, |t| t.span());
         bounds.extend(f.ty.clone());
-        bounds.extend(respan(lex(": ::portable_pod::Pod,"), at));
+        bounds.extend(respan(rooted(":", root, "::Pod,"), at));
         // Force each field's own layout proof, making the proof transitive.
         //
         // This line is load-bearing and its absence was unsound. A field type's proof is only
@@ -147,17 +183,43 @@ fn expand(input: &parse::Input) -> TokenStream {
         // `Inner<1>`'s layout was ever checked.
         inherit.extend(respan(lex("let _: () = <"), at));
         inherit.extend(f.ty.clone());
-        inherit.extend(respan(lex("as ::portable_pod::Pod>::__LAYOUT_OK;"), at));
+        inherit.extend(respan(rooted("as", root, "::Pod>::__LAYOUT_OK;"), at));
     }
+
+    // `Pod: Copy`, so the impl must prove `Self: Copy` -- and for a generic type with a *derived*
+    // `Copy` (`impl<K: Copy, V: Copy> Copy for Table<K, V>`) nothing above supplies it. Bounding
+    // the field types does not reach it: `[K; CAP]: Pod` does not let the solver conclude
+    // `K: Copy`, because that would mean reasoning backwards through the blanket
+    // `impl<T: Pod, const N: usize> Pod for [T; N]`. Without this predicate the derive failed on
+    // any generic struct that did not already declare `Copy` on its own parameters, which is most
+    // of them -- bounds belong on impls, not on struct definitions.
+    //
+    // The obligation is spelled as itself rather than as `T: Copy` on each type parameter. That
+    // per-parameter form is *sufficient* but not *necessary*, so it rejects types this crate has
+    // no business rejecting: a parameter reachable only through an associated-type projection,
+    // carrying a hand-written `Copy` impl, need not be `Copy` for the struct to be. `Self: Copy`
+    // is exactly the supertrait bound and admits every one of those. It also keeps the rule in
+    // §5 -- this derive never reasons about type parameters -- rather than making an exception
+    // to it, and it needs no case analysis over lifetimes and const parameters, which cannot
+    // carry the bound at all.
+    //
+    // Only for a generic type. A concrete one proves `Self: Copy` directly at the impl, which is
+    // a better diagnostic than deferring it to a use site (see `tests/ui/field_not_copy.rs`).
+    let copy_bound = if input.is_concrete {
+        TokenStream::new()
+    } else {
+        lex("Self: ::core::marker::Copy,")
+    };
 
     let existing = &input.where_predicates;
     let mut where_clause = TokenStream::new();
-    if !existing.is_empty() || !bounds.is_empty() {
+    if !existing.is_empty() || !bounds.is_empty() || !copy_bound.is_empty() {
         where_clause.extend(lex("where"));
         if !existing.is_empty() {
             where_clause.extend(existing.clone());
             where_clause.extend(lex(","));
         }
+        where_clause.extend(copy_bound);
         where_clause.extend(bounds);
     }
 
@@ -241,7 +303,7 @@ fn expand(input: &parse::Input) -> TokenStream {
         out.extend(decl.clone());
         out.extend(lex(">"));
     }
-    out.extend(lex("::portable_pod::Pod for"));
+    out.extend(rooted("", root, "::Pod for"));
     out.extend(TokenStream::from(TokenTree::Ident(name.clone())));
     if !uses.is_empty() {
         out.extend(lex("<"));
@@ -257,7 +319,7 @@ fn expand(input: &parse::Input) -> TokenStream {
     if input.is_concrete {
         out.extend(lex("const _: () = <"));
         out.extend(TokenStream::from(TokenTree::Ident(name.clone())));
-        out.extend(lex("as ::portable_pod::Pod>::__LAYOUT_OK;"));
+        out.extend(rooted("as", root, "::Pod>::__LAYOUT_OK;"));
     }
 
     out

@@ -71,6 +71,10 @@ pub struct Input {
     pub fields: Vec<Field>,
     /// True when the type has no generic parameters, so its proof can be forced unconditionally.
     pub is_concrete: bool,
+    /// Path from `#[pod(crate = ...)]`, if given. Every reference the expansion emits is rooted
+    /// here, so a crate that re-exports the trait can be named instead of `::portable_pod`.
+    /// `expand` supplies the default.
+    pub crate_path: Option<TokenStream>,
 }
 
 /// Is this `>` the tail of `->` or `=>` rather than a closing angle bracket?
@@ -179,12 +183,98 @@ struct Repr {
     span: Option<Span>,
 }
 
-fn scan_attrs(toks: &[TokenTree], i: &mut usize) -> Repr {
+/// Everything the derive reads off the item's attributes.
+struct Attrs {
+    repr: Repr,
+    /// The path from `#[pod(crate = ...)]`, if one was given.
+    crate_path: Option<TokenStream>,
+}
+
+/// Parse one `#[pod(...)]` attribute's arguments.
+///
+/// The only key is `crate`, whose value is a *path* (`::my_engine::mem`), not a string. Every
+/// reference the expansion emits is rooted at it, so this is what lets a crate re-export `Pod`
+/// and have the derive keep working through the re-export.
+fn parse_pod_attr(
+    head: &Ident,
+    args: Option<&TokenTree>,
+    seen: &mut Option<TokenStream>,
+) -> Result<(), Error> {
+    let Some(TokenTree::Group(g)) = args else {
+        return Err(Error::new(
+            head.span(),
+            "`#[pod]` takes arguments: the only one is `crate`, as `#[pod(crate = ::my_crate)]`, \
+             naming the path that exports `Pod`.",
+        ));
+    };
+    let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+    // `split_commas` never yields an empty run, so `arg[0]` is always there.
+    for arg in split_commas(&inner) {
+        let TokenTree::Ident(key) = &arg[0] else {
+            return Err(Error::new(
+                arg[0].span(),
+                "expected `crate = <path>` inside `#[pod(...)]`",
+            ));
+        };
+        if !is(key, "crate") {
+            return Err(Error::new(
+                key.span(),
+                format!(
+                    "unknown `#[pod]` argument `{key}`. The only one is `crate`, as \
+                     `#[pod(crate = ::my_crate)]`."
+                ),
+            ));
+        }
+        // A missing `=` and a missing path are one mistake to a reader, so they get one message.
+        let path = match arg.get(1) {
+            Some(TokenTree::Punct(p)) if p.as_char() == '=' && arg.len() > 2 => &arg[2..],
+            _ => {
+                return Err(Error::new(
+                    key.span(),
+                    "`crate` needs a path: write `#[pod(crate = ::my_crate)]`.",
+                ));
+            }
+        };
+        // No literal can begin a path, so any literal here is the mistake -- test the token kind
+        // rather than the quoting, or a raw string, a byte string and a bare number all fall
+        // through into the expansion and surface as `proc-macro derive produced unparsable
+        // tokens`, which tells a user nothing. A quoted path is the specific case worth naming:
+        // `serde` and `bytemuck` both take a string, so it is what someone arriving from either
+        // will write. Taking tokens instead is what lets rustc report a typo *in* the path at the
+        // typo, which re-lexing a string literal would throw away.
+        if let [TokenTree::Literal(lit), ..] = path {
+            let text = lit.to_string();
+            return Err(Error::new(
+                lit.span(),
+                match text.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
+                    Some(inner) => format!(
+                        "`#[pod(crate = ...)]` takes a path, not a string. Write \
+                         `#[pod(crate = {inner})]` -- without the quotes."
+                    ),
+                    None => String::from(
+                        "`#[pod(crate = ...)]` takes a path, as `#[pod(crate = ::my_crate)]`.",
+                    ),
+                },
+            ));
+        }
+        if seen.is_some() {
+            return Err(Error::new(
+                key.span(),
+                "`crate` is given more than once; keep a single `#[pod(crate = ...)]`.",
+            ));
+        }
+        *seen = Some(path.iter().cloned().collect());
+    }
+    Ok(())
+}
+
+fn scan_attrs(toks: &[TokenTree], i: &mut usize) -> Result<Attrs, Error> {
     let mut repr = Repr {
         c_or_transparent: false,
         packed: false,
         span: None,
     };
+    let mut crate_path: Option<TokenStream> = None;
     while *i + 1 < toks.len() {
         let TokenTree::Punct(p) = &toks[*i] else {
             break;
@@ -199,25 +289,27 @@ fn scan_attrs(toks: &[TokenTree], i: &mut usize) -> Repr {
             break;
         }
         let inner: Vec<TokenTree> = g.stream().into_iter().collect();
-        if let Some(TokenTree::Ident(head)) = inner.first()
-            && is(head, "repr")
-        {
-            repr.span = Some(head.span());
-            if let Some(TokenTree::Group(args)) = inner.get(1) {
-                for t in args.stream() {
-                    if let TokenTree::Ident(id) = t {
-                        if is(&id, "C") || is(&id, "transparent") {
-                            repr.c_or_transparent = true;
-                        } else if is(&id, "packed") {
-                            repr.packed = true;
+        if let Some(TokenTree::Ident(head)) = inner.first() {
+            if is(head, "repr") {
+                repr.span = Some(head.span());
+                if let Some(TokenTree::Group(args)) = inner.get(1) {
+                    for t in args.stream() {
+                        if let TokenTree::Ident(id) = t {
+                            if is(&id, "C") || is(&id, "transparent") {
+                                repr.c_or_transparent = true;
+                            } else if is(&id, "packed") {
+                                repr.packed = true;
+                            }
                         }
                     }
                 }
+            } else if is(head, "pod") {
+                parse_pod_attr(head, inner.get(1), &mut crate_path)?;
             }
         }
         *i += 2;
     }
-    repr
+    Ok(Attrs { repr, crate_path })
 }
 
 /// Split a generic parameter list into declaration form and use form.
@@ -336,7 +428,7 @@ pub fn parse(ts: TokenStream) -> Result<Input, Error> {
     let toks: Vec<TokenTree> = ts.into_iter().collect();
     let mut i = 0usize;
 
-    let repr = scan_attrs(&toks, &mut i);
+    let Attrs { repr, crate_path } = scan_attrs(&toks, &mut i)?;
     skip_vis(&toks, &mut i);
 
     let Some(TokenTree::Ident(kw)) = toks.get(i).cloned() else {
@@ -458,5 +550,6 @@ pub fn parse(ts: TokenStream) -> Result<Input, Error> {
         where_predicates: where_toks.into_iter().collect(),
         fields,
         is_concrete,
+        crate_path,
     })
 }

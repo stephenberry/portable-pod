@@ -139,7 +139,7 @@ Overclaiming here would be easy and wrong. `usize` is excluded not because byte 
 
 ## 7. Testing
 
-The compile-fail suite is the primary deliverable, not a supplement: a derive that accepts an unsound type is worse than a hand-written `unsafe impl`, because it launders a bad assertion through machinery that looks authoritative. 19 fixtures in `tests/ui/`, covering each clause, with `field_usize.rs` as the one that distinguishes this crate from `bytemuck`.
+The compile-fail suite is the primary deliverable, not a supplement: a derive that accepts an unsound type is worse than a hand-written `unsafe impl`, because it launders a bad assertion through machinery that looks authoritative. 25 fixtures in `tests/ui/`, covering each clause, with `field_usize.rs` as the one that distinguishes this crate from `bytemuck`.
 
 Beyond it: `tests/derive.rs` for the positive direction, `tests/portability.rs` for the cross-width property, Miri over the unsafe blocks, and a `cargo tree` assertion that the runtime crate has no dependencies at all.
 
@@ -152,7 +152,29 @@ Beyond it: `tests/derive.rs` for the positive direction, `tests/portability.rs` 
 
 Discharged since the first draft: Miri runs clean over `--lib`, `--test derive` and `--test portability` (the latter two were not covered before, and `--test derive` is where the UB was); the README's examples compile as doctests via `#[cfg(doctest)]`; and the feature matrix runs tests rather than only builds.
 
-## 9. Non-goals
+## 9. Being re-exported
+
+The derive expands to paths, and a path has to be rooted somewhere. Rooting it at `::portable_pod` is correct for a direct dependant and wrong for everyone downstream of a crate that re-exports the trait — which is the normal way a library hands its users one vocabulary. Those users depend on the library, not on this crate, so `::portable_pod` does not resolve for them and the derive is unusable no matter how cleanly the trait itself re-exports.
+
+This was found by adopting the crate into a library that re-exports `Pod` from its own `mem` module: the trait, `Bit` and the byte accessors all re-exported without incident, and then almost every site that wanted the derive — the ones whose hand-written padding arithmetic the derive exists to replace — could not have it.
+
+`#[pod(crate = <path>)]` roots the expansion elsewhere. Three decisions in it:
+
+- **A path, not a string.** `serde` and `bytemuck` both take a string, for a syn-shaped reason this crate does not have: with no `syn`, the attribute's tokens are already a token stream, and re-lexing a string literal would *discard* the spans they arrived with. Taking the path directly means a typo inside it is reported at the typo. A string literal is therefore an error, and the error names the unquoted replacement, because arriving from either of those crates and writing quotes is the likely mistake.
+- **Only the trait has to be reachable.** The expansion names `<path>::Pod` and nothing else, so a re-exporting crate needs one `pub use portable_pod::Pod;`. Requiring more would make the attribute a coupling to this crate's internals.
+- **No inference.** There is no attempt to detect the re-export automatically. `$crate` is available to `macro_rules!` and not to a derive, and guessing from the call site would be a heuristic that fails silently in exactly the case it was added for.
+
+The regression test is `tests/ui/pod_crate_wrong_path.rs`, which points the attribute at a module that does not export `Pod`. It pins the **impl header** — reverting that one site to a hardcoded `::portable_pod` changes the golden. It does *not* pin the other three (the field bound, the transitive `__LAYOUT_OK`, and the concrete forced proof): the first two are respanned onto the same field span and mask each other, and the third dedupes against the header's error. No trybuild fixture can pin those, because `::portable_pod` resolves inside any fixture crate; catching them needs a consumer that does not depend on this crate, which is where the bug was found in the first place.
+
+## 10. `Pod: Copy` for a generic type
+
+`Pod` requires `Copy`, so `unsafe impl Pod for T` obliges the compiler to prove `T: Copy`. For a generic struct with a derived `Copy` — `impl<K: Copy, V: Copy> Copy for Table<K, V>` — that means proving `K: Copy, V: Copy`, and the derive's field-type bounds do not supply it. `[K; CAP]: Pod` does not let the solver conclude `K: Copy`: that would mean reasoning backwards through the blanket `impl<T: Pod, const N: usize> Pod for [T; N]`, which is not something trait solving does.
+
+So the derive emits `T: ::core::marker::Copy` for each **type** parameter. `Copy` rather than `Pod`: it is the supertrait obligation exactly, and bounding the parameters `Pod` would additionally reject a type whose fields are `Pod` without every parameter being so — reachable through a hand-written impl on an inner type — which is a judgement about type parameters this derive has no business making (§5's rule that it never inspects a field type has the same root). Lifetimes and const parameters are excluded: a lifetime cannot be `Copy`, and emitting `'a: Copy` is a *syntax* error that would fail the whole item.
+
+The bug survived first release because both generic fixtures in `tests/derive.rs` happened to declare the bound inline (`Queue<T: Copy, const N: usize>`, `Guarded<T> where T: Copy`), and the derive copies a struct's own parameter list verbatim into the impl. Putting bounds on the impls instead of the struct is the more common style and was entirely unrepresented. `Unbounded` and `Mixed` now cover both, and `Mixed` is deliberately never constructed — for it, compiling *is* the assertion, since either wrong parameter kind fails the file rather than a test body.
+
+## 11. Non-goals
 
 - Competing with `bytemuck`. If your bytes never leave the machine, use it.
 - Floats. Excluded by clause 2, because NaN payloads are not stable across targets.
