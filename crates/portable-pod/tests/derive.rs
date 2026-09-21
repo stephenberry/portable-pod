@@ -266,8 +266,8 @@ mod braced_field_types {
         inner: Inline<{ K }>,
     }
 
-    /// Generic too, so the braces also reach the where-clause bounds and a post-monomorphization
-    /// proof.
+    /// Generic too, so the braced type also goes through the derive's generic path: a
+    /// `Self: Copy` bound, and a proof that runs per instantiation rather than at the definition.
     #[derive(Clone, Copy, Pod)]
     #[repr(C)]
     struct GenericBlockArgument<T>([T; 2], Inline<{ K * 2 }>);
@@ -288,7 +288,7 @@ mod braced_field_types {
 
 #[test]
 fn type_parameters_need_no_copy_bound_on_the_struct() {
-    // The `Pod: Copy` supertrait is discharged by the derive's own `K: Copy, V: Copy` predicates.
+    // The `Pod: Copy` supertrait is discharged by the derive's own `Self: Copy` predicate.
     let m: Unbounded<u64, u64, 4> = zeroed();
     assert_eq!(bytes_of(&m).len(), 4 * 8 + 4 * 8 + 4 + 4);
     // Still checked per instantiation, and still padding-free for these.
