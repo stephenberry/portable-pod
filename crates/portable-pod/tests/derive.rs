@@ -244,6 +244,48 @@ mod parser_regressions {
     }
 }
 
+/// Field types spelled with a const-generic block argument. The padding message names every
+/// field's type as written, and it used to be the *format string* of the generated `assert!`, so
+/// the braces were parsed as a placeholder and the derive failed with `invalid format string` on
+/// types that have no padding at all. The other half, that the message still names such a type,
+/// braces included, when it does fire, is `tests/ui/internal_padding_braced_type.rs`.
+mod braced_field_types {
+    use super::*;
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    pub struct Inline<const N: usize> {
+        pub a: [u32; N],
+    }
+
+    const K: usize = 4;
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    struct BlockArgument {
+        inner: Inline<{ K }>,
+    }
+
+    /// Generic too, so the braces also reach the where-clause bounds and a post-monomorphization
+    /// proof.
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    struct GenericBlockArgument<T>([T; 2], Inline<{ K * 2 }>);
+
+    #[test]
+    fn all_of_these_compile_and_work() {
+        assert_eq!(bytes_of(&zeroed::<BlockArgument>()).len(), 16);
+        assert_eq!(
+            bytes_of(&zeroed::<GenericBlockArgument<u32>>()).len(),
+            8 + 32
+        );
+        assert_eq!(
+            bytes_of(&zeroed::<GenericBlockArgument<u64>>()).len(),
+            16 + 32
+        );
+    }
+}
+
 #[test]
 fn type_parameters_need_no_copy_bound_on_the_struct() {
     // The `Pod: Copy` supertrait is discharged by the derive's own `K: Copy, V: Copy` predicates.

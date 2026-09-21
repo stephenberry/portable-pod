@@ -282,9 +282,15 @@ fn expand(input: &parse::Input) -> TokenStream {
          escape: a typed copy leaves padding uninitialized however the value was built."
     );
 
+    // The message goes in as the argument to `"{}"`, never as the format string itself. It embeds
+    // each field's type as written, and a type can contain braces (`Inline<{ K }>`) that a format
+    // string would read as a placeholder, failing the expansion even for a struct with no padding.
+    // One argument to `"{}"` is also the form `core::panic!` special-cases for const evaluation.
+    // Tested by `braced_field_types` in `tests/derive.rs` and by
+    // `tests/ui/internal_padding_braced_type.rs`.
     let mut assert_args = lex("::core::mem::size_of::<Self>() ==");
     assert_args.extend(total);
-    assert_args.extend(lex(","));
+    assert_args.extend(lex(r#", "{}","#));
     assert_args.extend(TokenStream::from(TokenTree::Literal(Literal::string(&msg))));
     let mut checks = lex("::core::assert!");
     checks.extend(delimit(Delimiter::Parenthesis, assert_args));
