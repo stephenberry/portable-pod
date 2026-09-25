@@ -157,6 +157,32 @@
 //! failure is the pin doing its job. If the alignment has to hold everywhere, fix it with
 //! `#[repr(C, align(8))]`, which the pin then confirms.
 //!
+//! # Shapes: refusing bytes written against another layout
+//!
+//! A pin catches a change of size. It cannot catch two `u32` fields swapped, or a `u32` retyped as
+//! an `i32`: the size is the same and the old bytes read back as the wrong values. For that, every
+//! `Pod` type has [`Pod::SHAPE`], a 64-bit hash of its field names and types that a file, replay or
+//! wire header can carry and a reader can compare:
+//!
+//! ```
+//! use portable_pod::Pod;
+//!
+//! #[derive(Clone, Copy, Pod)]
+//! #[repr(C)]
+//! struct Record {
+//!     id: u64,
+//!     kind: u32,
+//!     flags: u32,
+//! }
+//!
+//! const RECORD_SHAPE: Option<u64> = Record::SHAPE; // written into the header, checked on load
+//! # assert!(RECORD_SHAPE.is_some());
+//! ```
+//!
+//! The value is the same on every target, and it is a **persistence format**: the algorithm,
+//! documented exactly in [`shape`], changes only in a semver-major release. A type's own name is
+//! not part of it, so renaming a type does not invalidate stored data.
+//!
 //! # What "portable" does and does not mean
 //!
 //! The guarantee is about **layout**: size, field offsets, the absence of padding, and the
@@ -266,6 +292,7 @@ mod bit;
 #[cfg(feature = "alloc")]
 mod boxed;
 mod bytes;
+pub mod shape;
 
 pub use bit::Bit;
 pub use bytes::{bytes_of, bytes_of_mut, bytes_of_slice, bytes_of_slice_mut, read_pod, zeroed};
@@ -280,12 +307,17 @@ pub use boxed::{boxed_zeroed, boxed_zeroed_with};
 ///
 /// There is no opt-out for padding; see the macro's own documentation for why.
 ///
-/// Accepts one attribute, `#[pod(...)]`, with three optional arguments:
+/// It also fills in [`Pod::SHAPE`] from the fields' names and shapes and any const generic
+/// parameters; see [`shape`] for exactly what that covers.
+///
+/// Accepts one attribute, `#[pod(...)]`, with four optional arguments:
 ///
 /// * `crate = <path>` names the path that exports [`Pod`] when it is reached through a re-export
 ///   rather than as `::portable_pod`.
 /// * `size = <expr>` and `align = <expr>` pin the type's size and alignment in bytes, so a layout
 ///   change fails the build. See [Pinning the layout](crate#pinning-the-layout).
+/// * `shape_with = <expr>` folds one more `u64` constant into [`Pod::SHAPE`]. See
+///   [Extending a derived shape](shape#extending-a-derived-shape).
 #[cfg(feature = "derive")]
 pub use portable_pod_derive::Pod;
 
@@ -344,6 +376,52 @@ pub unsafe trait Pod: Copy + 'static {
     /// The default is the empty proof, which is what a hand-written impl of a primitive wants.
     #[doc(hidden)]
     const __LAYOUT_OK: () = ();
+
+    /// A 64-bit hash of this type's field structure, or `None` if it is not known.
+    ///
+    /// For a format header to carry. A reader compares it against the shape it was built with and
+    /// refuses the bytes on a mismatch, which catches the layout changes a size check cannot: two
+    /// fields of the same width swapped, a field renamed, or a `u32` retyped as an `i32`.
+    ///
+    /// ```
+    /// use portable_pod::Pod;
+    ///
+    /// #[derive(Clone, Copy, Pod)]
+    /// #[repr(C)]
+    /// struct V1 { lo: u32, hi: u32 }
+    ///
+    /// #[derive(Clone, Copy, Pod)]
+    /// #[repr(C)]
+    /// struct V2 { hi: u32, lo: u32 } // the same size, and every old file misread
+    ///
+    /// assert_ne!(V1::SHAPE, V2::SHAPE);
+    /// ```
+    ///
+    /// * The integer scalars, `()` and [`Bit`] each have a distinct shape, `[T; N]` combines
+    ///   `T`'s with `N`, and `#[derive(Pod)]` folds in each field's name and shape in declaration
+    ///   order, each const generic parameter's value, and `size_of::<Self>()`. A type's own name
+    ///   is **not** included, so a rename does not invalidate stored data, and `Tick(u64)` and
+    ///   `Money(u64)` share a shape. Alignment and `repr` are not included either.
+    /// * `None` is what a hand-written impl reports unless it states a shape, and it is
+    ///   contagious: a struct or array containing a `None` is `None` too, so a `Some` always
+    ///   covers the whole type. [`shape`] has the functions a hand-written impl can use instead.
+    /// * Reading `SHAPE` is not a layout check. A generic instantiation's padding proof runs when
+    ///   it reaches [`bytes_of`] or another entry point, as always, and the bytes a shape
+    ///   describes come from one.
+    ///
+    /// **The value is a persistence format.** It is the same on every target, and the algorithm
+    /// that produces it, documented exactly in [`shape`], changes only in a semver-major release.
+    const SHAPE: Option<u64> = None;
+
+    /// Where a derived shape fold starts, reached as `<() as Pod>::__SHAPE_FOLD`. Not part of the
+    /// public API.
+    ///
+    /// This exists so the derive's expansion names nothing but the trait. `#[pod(crate = ...)]`
+    /// promises a re-exporting crate that `Pod` is the one item it has to re-export, and a path to
+    /// [`shape::Fold`] would break that promise; a value of that type reached through the trait
+    /// lets the expansion call its methods without naming it. See DESIGN.md §12.
+    #[doc(hidden)]
+    const __SHAPE_FOLD: shape::Fold = shape::Fold::new();
 }
 
 /// Force `T`'s layout proof to be evaluated for this instantiation.
@@ -382,14 +460,28 @@ pub fn assert_layout<T: Pod>() {
 }
 
 macro_rules! impl_pod_scalar {
-    ($($t:ty),* $(,)?) => { $(
+    ($($t:ty => $tag:expr),* $(,)?) => { $(
         // SAFETY: an integer scalar is `Copy`, has no padding, is valid for every bit pattern,
         // and has a width fixed by the type rather than by the target. `usize`/`isize` are
         // excluded precisely because they fail that last point (clause 4).
-        unsafe impl Pod for $t {}
+        unsafe impl Pod for $t {
+            const SHAPE: Option<u64> = shape::scalar($tag);
+        }
     )* };
 }
-impl_pod_scalar!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, ());
+impl_pod_scalar!(
+    u8 => shape::tag::U8,
+    u16 => shape::tag::U16,
+    u32 => shape::tag::U32,
+    u64 => shape::tag::U64,
+    u128 => shape::tag::U128,
+    i8 => shape::tag::I8,
+    i16 => shape::tag::I16,
+    i32 => shape::tag::I32,
+    i64 => shape::tag::I64,
+    i128 => shape::tag::I128,
+    () => shape::tag::UNIT,
+);
 
 // SAFETY: an array of `Pod` is contiguous with no padding between elements (element stride is
 // `size_of::<T>()` exactly), so it inherits every clause from `T`.
@@ -398,6 +490,7 @@ unsafe impl<T: Pod, const N: usize> Pod for [T; N] {
     // wrapping a type in an array *erased* its proof: `[Inner<1>; 2]` would take the default
     // `()` here, and nothing would ever force `<Inner<1> as Pod>::__LAYOUT_OK`.
     const __LAYOUT_OK: () = <T as Pod>::__LAYOUT_OK;
+    const SHAPE: Option<u64> = shape::array(<T as Pod>::SHAPE, N);
 }
 
 #[cfg(test)]

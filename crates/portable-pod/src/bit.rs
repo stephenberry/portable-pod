@@ -81,7 +81,11 @@ impl core::fmt::Debug for Bit {
 // target-dependent width. Crucially every one of the 256 bit patterns is a valid `Bit`: the value
 // is read via `self.0 != 0`, which is defined for all of them. That any-bit-pattern property is
 // what `bool` lacks and is the entire reason this type exists.
-unsafe impl Pod for Bit {}
+unsafe impl Pod for Bit {
+    // Not `u8`'s shape: the bytes are the same, but a `u8` field retyped as a flag changes what
+    // they mean.
+    const SHAPE: Option<u64> = crate::shape::scalar(crate::shape::tag::BIT);
+}
 
 #[cfg(test)]
 mod tests {

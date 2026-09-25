@@ -98,7 +98,7 @@ Second, that volume has been reduced twice, and this is the history because both
 | 16 | +0.39s | +0.06s |
 | 48 | +1.11s | +0.08s |
 
-The shipped form is **essentially flat in field count**; the per-field checks were roughly 85% of the derive's total cost at every size, not just at the extreme. Two probes locate that cost at 48 fields: N `assert!`s with no layout expressions at all cost +0.26s, because const panic sites are not free, and N `offset_of!` calls cost a further +0.23s.
+The shipped form is **essentially flat in field count**; the per-field checks were roughly 85% of the derive's total cost at every size, not just at the extreme. (`Pod::SHAPE` has since added a term that is linear in field count, by choice and measured; §12 has the numbers.) Two probes locate that cost at 48 fields: N `assert!`s with no layout expressions at all cost +0.26s, because const panic sites are not free, and N `offset_of!` calls cost a further +0.23s.
 
 Guarding the per-field asserts behind the cheap check recovers nothing — measured +1.11s, no better than leaving them unguarded — because the cost is type-checking and MIR construction, which happen whether or not const-evaluation reaches them. There is no arrangement that keeps the detail for free.
 
@@ -139,9 +139,9 @@ Overclaiming here would be easy and wrong. `usize` is excluded not because byte 
 
 ## 7. Testing
 
-The compile-fail suite is the primary deliverable, not a supplement: a derive that accepts an unsound type is worse than a hand-written `unsafe impl`, because it launders a bad assertion through machinery that looks authoritative. 32 fixtures in `tests/ui/`, covering each clause, with `field_usize.rs` as the one that distinguishes this crate from `bytemuck`.
+The compile-fail suite is the primary deliverable, not a supplement: a derive that accepts an unsound type is worse than a hand-written `unsafe impl`, because it launders a bad assertion through machinery that looks authoritative. 33 fixtures in `tests/ui/`, covering each clause, with `field_usize.rs` as the one that distinguishes this crate from `bytemuck`.
 
-Beyond it: `tests/derive.rs` for the positive direction, `tests/portability.rs` for the cross-width property, Miri over the unsafe blocks, and a `cargo tree` assertion that the runtime crate has no dependencies at all.
+Beyond it: `tests/derive.rs` for the positive direction, `tests/portability.rs` for the cross-width property, `tests/shape.rs` for the frozen shape values (§12), Miri over the unsafe blocks, and a `cargo tree` assertion that the runtime crate has no dependencies at all.
 
 ## 8. Not done
 
@@ -164,7 +164,7 @@ This was found by adopting the crate into a library that re-exports `Pod` from i
 - **Only the trait has to be reachable.** The expansion names `<path>::Pod` and nothing else, so a re-exporting crate needs one `pub use portable_pod::Pod;`. Requiring more would make the attribute a coupling to this crate's internals.
 - **No inference.** There is no attempt to detect the re-export automatically. `$crate` is available to `macro_rules!` and not to a derive, and guessing from the call site would be a heuristic that fails silently in exactly the case it was added for.
 
-The regression test is `tests/ui/pod_crate_wrong_path.rs`, which points the attribute at a module that does not export `Pod`. It pins the **impl header** — reverting that one site to a hardcoded `::portable_pod` changes the golden. It does *not* pin the other three (the field bound, the transitive `__LAYOUT_OK`, and the concrete forced proof): the first two are respanned onto the same field span and mask each other, and the third dedupes against the header's error. No trybuild fixture can pin those, because `::portable_pod` resolves inside any fixture crate; catching them needs a consumer that does not depend on this crate, which is where the bug was found in the first place.
+The regression test is `tests/ui/pod_crate_wrong_path.rs`, which points the attribute at a module that does not export `Pod`. It pins the **impl header** — reverting that one site to a hardcoded `::portable_pod` changes the golden. It does *not* pin the others (the field bound, the transitive `__LAYOUT_OK`, the concrete forced proof, and the two in `SHAPE`): the field bound, the transitive proof and `SHAPE`'s per-field projection are respanned onto the same field span and mask each other, and the forced proof and `SHAPE`'s `<() as Pod>::__SHAPE_FOLD` dedupe against the header's error. No trybuild fixture can pin those, because `::portable_pod` resolves inside any fixture crate; catching them needs a consumer that does not depend on this crate, which is where the bug was found in the first place.
 
 ## 10. `Pod: Copy` for a generic type
 
@@ -186,7 +186,44 @@ Three decisions in it:
 
 Alignment is the one pinnable property that is not portable by construction: a padding-free type's size is the sum of its fields everywhere, but a `u64`'s alignment is 8 on 64-bit targets and 4 on 32-bit x86. An `align = 8` pin failing on i686 is therefore correct, not a false positive, and the answer is `repr(C, align(8))`. The docs say so rather than weakening the pin.
 
-## 12. Non-goals
+## 12. Shape hash
+
+A size pin (§11) catches a layout that grew or shrank. It cannot catch one that changed without changing size: two `u32` fields swapped, a field renamed, a `u32` retyped as an `i32`. The bytes still fit and read back as the wrong values. `Pod::SHAPE: Option<u64>` is a hash of a type's field structure that a consumer writes into a file, replay or wire header and compares on load, refusing an image written against another shape instead of misreading it.
+
+**It is a persistence format.** Consumers persist the value, so the algorithm is public (`portable_pod::shape` documents it exactly: constants, encoding, built-in tags), and it changes only in a semver-major release. `tests/shape.rs` pins exact values for every built-in scalar, an array, a nested struct, a tuple struct, a unit struct, a generic struct at two const arguments, `shape_with`, and the `None` case; those goldens are the freeze. The same file re-implements the algorithm from the docs alone, sharing no code with the crate, and checks it reproduces the goldens, so the documentation is verified to be the algorithm. CI runs the file on `wasm32-wasip1` as well, because a shape must be the same on every target.
+
+What is in and out, and why:
+
+| In | Out |
+| --- | --- |
+| each field's name and shape, in declaration order (tuple fields by index, `"0"`, `"1"`, …; `r#type` as `type`) | the type's own name |
+| each const generic parameter's value, in declaration order | `repr`, alignment, `align(N)` |
+| `#[pod(shape_with = <u64 expr>)]`, if given | field visibility, attributes, generic parameter names |
+| `size_of::<Self>()` | |
+
+- **Type names are out** so that renaming a type does not invalidate every save that stored one. The cost is that `Tick(u64)` and `Money(u64)` share a shape, so a field retyped from one to the other is not detected. `shape_with` is the escape for a type that must be told apart, and its intended use is a wrapper storing an enum's discriminant as an integer, which folds in a hash of the variant table so that reordering the enum refuses old data.
+- **Alignment is out** because it varies by target (a `u64` is 4-aligned on i686) and a shape must not. It is also redundant: the padding proof makes the size the sum of the field sizes, and the fields' shapes already determine those.
+- **Const parameters are in** because they can carry meaning without changing layout: `Fixed<32>` and `Fixed<24>` have identical fields. Each is cast `as u128`, lossless for every type a stable const parameter can have (integers, `bool`, `char`), and absorbed as two words. Type parameters need nothing: they reach the shape through the fields that use them.
+- **Wrapping is a change.** `struct Tick(u64)` is a struct with one field named `0`, not a `u64`, so a field retyped from `u64` to `Tick` refuses old data. That is conservative, and the conservative direction is the right one for a check whose failure mode is misreading.
+- **`None` is contagious.** A hand-written impl reports `None` unless it states a shape, which is what makes adding the item a minor release: every existing impl compiles and honestly reports that it has no shape. Any struct or array containing a `None` is `None`, so a `Some` always covers the whole type. A hand-written impl can compute a real one with `shape::scalar`, `shape::array` and `shape::Fold`, the same functions the derive uses.
+
+**The algorithm.** A 64-bit state absorbs 64-bit words as `s = mix(s ^ w)`, where `mix` is the SplitMix64 finalizer (a bijection with full avalanche), starting from the first 64 fractional bits of π. Every record opens with a kind word (scalar, array, struct, field, parameter, extension, end) and has a length fixed by what precedes it (a name is its byte length, then its bytes packed eight to a little-endian word), so the encoding is unambiguous and two different structures agree only by a 64-bit collision. It is not cryptographic: a collision can be constructed on purpose, and nothing here defends against that, since the threat is a programmer's edit, not an adversary. Over a program's few thousand types the chance of an accidental collision is around 2^-40.
+
+**Reached through the trait.** §9 promises a re-exporting crate that `Pod` is the only item it has to re-export. A derive that called `<root>::shape::Fold::new()` would break that promise, and every existing `#[pod(crate = ...)]` user, in a minor release. So the trait carries a hidden `const __SHAPE_FOLD: shape::Fold`, the expansion reads it as `<() as <root>::Pod>::__SHAPE_FOLD`, and calls `Fold`'s `const fn` methods on the value: method resolution does not need the type's path to be nameable. `()` because only this crate can implement `Pod` for it, so no impl can override the starting point.
+
+**The emitted const**, and what it cost. It is one block, lazily evaluated (rustc evaluates an associated const only where something names it), with no panic site and no forced layout proof: a const panic site costs at every derive (§5.1), and forcing `__LAYOUT_OK` would be redundant beside the entry points that already force it while adding a second "erroneous constant" trail to every padding diagnostic. Measured with the §5.1 harness (200 derived structs of `u32` fields, `cargo check`, delta against the same structs without `Pod`, minimum of 20 interleaved rounds, rustc 1.98, Apple M1 Max):
+
+| fields per struct | 0.1.4 derive | with `SHAPE` | `SHAPE` read for every struct |
+| --- | --- | --- | --- |
+| 4 | +0.04s | +0.06s | +0.06s |
+| 16 | +0.07s | +0.10s | +0.10s |
+| 48 | +0.15s | +0.24s | +0.24s |
+
+So `SHAPE` adds about half again to the derive's use-site cost, linearly in field count, and evaluating it is within noise: the cost is type-checking the const at every derive, whether or not it is read. (The first column differs from §5.1's table because the toolchain and machine do; the comparison is within one run.) The emitted form is what keeps it there. A `.field(name, <F as Pod>::SHAPE)` call per field added about 2.5 times as much at 48 fields; the shipped form binds one projection per *distinct* field type and passes every field in a single `.fields(&[(name, shape), …])` call. A further third of the remaining cost can be had by packing the names into one NUL-separated string beside an array of shapes, which was measured and declined: it needs a hidden, stringly protocol between the derive and the runtime, for about 3µs a field.
+
+The per-field projections are respanned onto the first field of each type, where the field bound and the transitive proof already land, so a field type that is not `Pod` is still reported once. The compile-fail suite confirmed it: of 32 fixtures, the only goldens to change were the one that lists the `#[pod]` arguments and one that quotes the scalar impls' source.
+
+## 13. Non-goals
 
 - Competing with `bytemuck`. If your bytes never leave the machine, use it.
 - Floats. Excluded by clause 2, because NaN payloads are not stable across targets.

@@ -48,6 +48,9 @@ jobs:
       # The point of the whole crate: a 32-bit target must agree byte-for-byte with the 64-bit
       # hosts above. A `usize` field anywhere would break this and nothing else would notice.
       - run: cargo test --target wasm32-wasip1 --test portability
+      # Shapes are persisted, so the frozen goldens must hold on a 32-bit target too: a `usize`
+      # folded at its native width anywhere in the algorithm would break this.
+      - run: cargo test --target wasm32-wasip1 --test shape
 
   # `#![no_std]` at the crate root is self-enforcing: any use of `std` fails to compile on every
   # target, and the zero-dependency job rules out a dep dragging `std` in. So this is the feature

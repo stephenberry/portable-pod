@@ -56,6 +56,9 @@ impl Error {
 pub struct Field {
     /// How to name this field in a diagnostic: a field name, or a tuple index.
     pub label: String,
+    /// The name the shape folds in: the label without any `r#`, since `r#type` and `type` name
+    /// the same field.
+    pub shape_name: String,
     /// The field type, verbatim and uninspected.
     pub ty: TokenStream,
 }
@@ -66,6 +69,8 @@ pub struct Input {
     pub generics_decl: TokenStream,
     /// The same parameters in use position: `N, T`.
     pub generics_use: TokenStream,
+    /// The names of the const parameters, in declaration order: what the shape folds in.
+    pub const_params: Vec<Ident>,
     /// Predicates from an existing `where` clause, if any.
     pub where_predicates: TokenStream,
     pub fields: Vec<Field>,
@@ -79,9 +84,12 @@ pub struct Input {
     pub size: Option<Pin>,
     /// The expression from `#[pod(align = ...)]`, if given: the alignment the type must have.
     pub align: Option<Pin>,
+    /// The expression from `#[pod(shape_with = ...)]`, if given: a `u64` folded into the shape.
+    pub shape_with: Option<Pin>,
 }
 
-/// A `size` or `align` pin: a `usize` constant expression, captured uninspected like a field type.
+/// A `size`, `align` or `shape_with` value: a constant expression, captured uninspected like a
+/// field type.
 pub struct Pin {
     pub expr: TokenStream,
     /// The expression's first token, inside the user's attribute: where a mismatch is reported.
@@ -231,18 +239,20 @@ struct PodArgs {
     crate_path: Option<TokenStream>,
     size: Option<Pin>,
     align: Option<Pin>,
+    shape_with: Option<Pin>,
 }
 
 /// The arguments `#[pod(...)]` accepts, spelled out for every diagnostic that lists them.
-const POD_ARGS: &str =
-    "`crate`, `size` and `align`, as `#[pod(crate = ::my_crate, size = 16, align = 8)]`";
+const POD_ARGS: &str = "`crate`, `size`, `align` and `shape_with`, as \
+     `#[pod(crate = ::my_crate, size = 16, align = 8, shape_with = 0x1234)]`";
 
 /// Parse one `#[pod(...)]` attribute's arguments.
 ///
 /// `crate` takes a *path* (`::my_engine::mem`), not a string. Every reference the expansion emits
 /// is rooted at it, so this is what lets a crate re-export `Pod` and have the derive keep working
 /// through the re-export. `size` and `align` each take a `usize` constant expression, pinning the
-/// layout the type must have.
+/// layout the type must have. `shape_with` takes a `u64` constant expression, folded into the
+/// type's shape.
 fn parse_pod_attr(head: &Ident, args: Option<&TokenTree>, seen: &mut PodArgs) -> Result<(), Error> {
     let Some(TokenTree::Group(g)) = args else {
         return Err(Error::new(
@@ -267,6 +277,8 @@ fn parse_pod_attr(head: &Ident, args: Option<&TokenTree>, seen: &mut PodArgs) ->
             "the size in bytes: write `#[pod(size = 16)]`"
         } else if is(key, "align") {
             "the alignment in bytes: write `#[pod(align = 8)]`"
+        } else if is(key, "shape_with") {
+            "a `u64` constant expression: write `#[pod(shape_with = 0x1234)]`"
         } else {
             return Err(Error::new(
                 key.span(),
@@ -283,8 +295,10 @@ fn parse_pod_attr(head: &Ident, args: Option<&TokenTree>, seen: &mut PodArgs) ->
         if !is(key, "crate") {
             let slot = if is(key, "size") {
                 &mut seen.size
-            } else {
+            } else if is(key, "align") {
                 &mut seen.align
+            } else {
+                &mut seen.shape_with
             };
             if slot.is_some() {
                 return Err(Error::new(
@@ -331,7 +345,7 @@ fn parse_pod_attr(head: &Ident, args: Option<&TokenTree>, seen: &mut PodArgs) ->
     Ok(())
 }
 
-/// Capture a `size` or `align` value.
+/// Capture a `size`, `align` or `shape_with` value.
 ///
 /// The value is an expression, re-emitted verbatim, so it may name constants and, on a generic
 /// type, the type's own parameters (`size = 4 * N + 4`). The one thing to catch here is a `<`
@@ -431,11 +445,12 @@ fn scan_attrs(toks: &[TokenTree], i: &mut usize) -> Result<Attrs, Error> {
 
 /// Split a generic parameter list into declaration form and use form.
 ///
-/// `<const N: usize, T: Copy = u8>` yields `const N: usize, T: Copy` and `N, T`. Defaults are
-/// stripped because an `impl` generic list may not carry them.
-fn split_generics(inner: &[TokenTree]) -> Result<(TokenStream, TokenStream), Error> {
+/// `<const N: usize, T: Copy = u8>` yields `const N: usize, T: Copy` and `N, T`, and `N` as the
+/// one const parameter. Defaults are stripped because an `impl` generic list may not carry them.
+fn split_generics(inner: &[TokenTree]) -> Result<Generics, Error> {
     let mut decl = TokenStream::new();
     let mut uses = TokenStream::new();
+    let mut consts = Vec::new();
     for (n, raw) in split_commas(inner).into_iter().enumerate() {
         if n > 0 {
             decl.extend([TokenTree::Punct(Punct::new(',', Spacing::Alone))]);
@@ -482,17 +497,26 @@ fn split_generics(inner: &[TokenTree]) -> Result<(TokenStream, TokenStream), Err
                 uses.extend(param[..2].iter().cloned());
             }
             Some(TokenTree::Ident(id)) if is(id, "const") => {
-                let Some(name) = param.get(1) else {
+                let Some(TokenTree::Ident(name)) = param.get(1) else {
                     return Err(Error::new(id.span(), "malformed const generic parameter"));
                 };
-                uses.extend([name.clone()]);
+                uses.extend([TokenTree::Ident(name.clone())]);
+                consts.push(name.clone());
             }
             Some(t @ TokenTree::Ident(_)) => uses.extend([t.clone()]),
             Some(t) => return Err(Error::new(t.span(), "unsupported generic parameter")),
             None => {}
         }
     }
-    Ok((decl, uses))
+    Ok(Generics { decl, uses, consts })
+}
+
+/// A generic parameter list, split by [`split_generics`].
+#[derive(Default)]
+struct Generics {
+    decl: TokenStream,
+    uses: TokenStream,
+    consts: Vec<Ident>,
 }
 
 fn parse_named_fields(g: &Group) -> Result<Vec<Field>, Error> {
@@ -514,8 +538,10 @@ fn parse_named_fields(g: &Group) -> Result<Vec<Field>, Error> {
         if i >= f.len() {
             return Err(Error::new(name.span(), "field has no type"));
         }
+        let label = name.to_string();
         out.push(Field {
-            label: name.to_string(),
+            shape_name: label.strip_prefix("r#").unwrap_or(&label).to_owned(),
+            label,
             ty: f[i..].iter().cloned().collect(),
         });
     }
@@ -535,6 +561,7 @@ fn parse_tuple_fields(g: &Group) -> Result<Vec<Field>, Error> {
         }
         out.push(Field {
             label: idx.to_string(),
+            shape_name: idx.to_string(),
             ty: f[i..].iter().cloned().collect(),
         });
     }
@@ -579,12 +606,12 @@ pub fn parse(ts: TokenStream) -> Result<Input, Error> {
     };
     i += 1;
 
-    let (generics_decl, generics_use) = match toks.get(i) {
+    let generics = match toks.get(i) {
         Some(TokenTree::Punct(p)) if p.as_char() == '<' => {
             let inner = take_angles(&toks, &mut i);
             split_generics(&inner)?
         }
-        _ => (TokenStream::new(), TokenStream::new()),
+        _ => Generics::default(),
     };
 
     // `struct S<T> where …: { … }` and `struct S<T>(…) where …;` put the clause on either side
@@ -659,16 +686,18 @@ pub fn parse(ts: TokenStream) -> Result<Input, Error> {
         where_toks.pop();
     }
 
-    let is_concrete = generics_decl.is_empty();
+    let is_concrete = generics.decl.is_empty();
     Ok(Input {
         name,
-        generics_decl,
-        generics_use,
+        generics_decl: generics.decl,
+        generics_use: generics.uses,
+        const_params: generics.consts,
         where_predicates: where_toks.into_iter().collect(),
         fields,
         is_concrete,
         crate_path: pod.crate_path,
         size: pod.size,
         align: pod.align,
+        shape_with: pod.shape_with,
     })
 }

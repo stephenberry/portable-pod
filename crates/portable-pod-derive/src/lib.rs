@@ -52,6 +52,14 @@ fn respan(ts: TokenStream, span: Span) -> TokenStream {
         .collect()
 }
 
+/// The span of a field type's first token: where a diagnostic about that field belongs.
+fn field_span(ty: &TokenStream) -> Span {
+    ty.clone()
+        .into_iter()
+        .next()
+        .map_or_else(Span::call_site, |t| t.span())
+}
+
 /// Wrap a stream in a delimiter.
 fn delimit(delimiter: Delimiter, ts: TokenStream) -> TokenStream {
     TokenStream::from(TokenTree::Group(Group::new(delimiter, ts)))
@@ -100,6 +108,13 @@ fn rooted(prefix: &str, crate_path: &TokenStream, suffix: &str) -> TokenStream {
 /// `Pod: Copy` supertrait obligation and nothing more — the struct itself does not have to
 /// declare `Copy` on its parameters, and most do not, preferring to put bounds on their impls.
 ///
+/// # What it emits besides the proof
+///
+/// `Pod::SHAPE`, a 64-bit hash of the field structure for a format header to carry: each field's
+/// name and shape in declaration order, each const generic parameter's value, and the size. The
+/// type's own name is not included. `portable_pod::shape` documents the algorithm exactly, and it
+/// is frozen: the value changes only in a semver-major release of `portable-pod`.
+///
 /// # Using the derive through a re-export
 ///
 /// By default the expansion names `::portable_pod::Pod`, which resolves only in a crate that
@@ -116,6 +131,12 @@ fn rooted(prefix: &str, crate_path: &TokenStream, suffix: &str) -> TokenStream {
 /// on it. Each value is a `usize` constant expression; on a generic type it may name the type's
 /// parameters and is checked per instantiation. They combine with `crate` in one attribute or
 /// several. See the crate docs, "Pinning the layout".
+///
+/// # Extending the shape
+///
+/// `#[pod(shape_with = <expr>)]` folds one more `u64` constant expression into `Pod::SHAPE`, for
+/// meaning the fields cannot express, such as the variant table of an enum whose discriminant a
+/// wrapper stores as an integer. On a generic type it may name the type's parameters.
 ///
 /// # Padding must be eliminated, not excused
 ///
@@ -174,11 +195,7 @@ fn expand(input: &parse::Input) -> TokenStream {
         // Respan our own tokens onto the field's type so `usize: Pod` is reported at the field,
         // not at the `Pod` in the derive attribute several lines above it. The type's own tokens
         // are extended in verbatim and keep the spans they came with.
-        let at =
-            f.ty.clone()
-                .into_iter()
-                .next()
-                .map_or_else(Span::call_site, |t| t.span());
+        let at = field_span(&f.ty);
         bounds.extend(f.ty.clone());
         bounds.extend(respan(rooted(":", root, "::Pod,"), at));
         // Force each field's own layout proof, making the proof transitive.
@@ -318,6 +335,7 @@ fn expand(input: &parse::Input) -> TokenStream {
     let mut body = lex("#[allow(clippy::let_unit_value)] const __LAYOUT_OK: () =");
     body.extend(delimit(Delimiter::Brace, proof));
     body.extend(lex(";"));
+    body.extend(shape(input, root));
 
     let mut out = lex("#[automatically_derived] unsafe impl");
     if !decl.is_empty() {
@@ -345,6 +363,96 @@ fn expand(input: &parse::Input) -> TokenStream {
     }
 
     out
+}
+
+/// `const SHAPE`: the fields' names and shapes in declaration order, then each const parameter's
+/// value, then any `#[pod(shape_with = ...)]`, then the size. The algorithm and what it leaves out
+/// are documented on `portable_pod::shape`, and DESIGN.md §12 has the reasoning.
+///
+/// ```text
+/// const SHAPE: Option<u64> = {
+///     let __pod_shape_0 = <u32 as Pod>::SHAPE;
+///     let __pod_shape_1 = <[u8; 4] as Pod>::SHAPE;
+///     <() as Pod>::__SHAPE_FOLD
+///         .fields(&[("a", __pod_shape_0), ("b", __pod_shape_1), ("c", __pod_shape_0)])
+///         .param(N as u128)
+///         .with(<shape_with>)
+///         .finish(size_of::<Self>())
+/// };
+/// ```
+///
+/// Three decisions are in that shape:
+///
+/// * **The fold is reached through the trait.** `<() as Pod>::__SHAPE_FOLD` is a
+///   `portable_pod::shape::Fold`, and method calls on it resolve without naming that type's path,
+///   so the expansion still names nothing but `<root>::Pod`, which is all `#[pod(crate = ...)]`
+///   asks a re-exporting crate to provide.
+/// * **One projection per distinct field type, one call for all the fields.** The cost of this
+///   const is type-checking it, at every derive, whether or not anything reads it; evaluating it
+///   is noise by comparison. A `.field(..)` call per field, each with its own projection, cost
+///   about two and a half times as much at 48 fields (DESIGN.md §12 has the numbers).
+/// * **No assertion, and no forced layout proof.** A const panic site costs compile time at every
+///   derive (§5.1). Forcing `__LAYOUT_OK` here would be redundant, since a shape is only useful
+///   beside bytes an entry point produced and every entry point forces it, and it would add a
+///   second "erroneous constant" trail to every padding diagnostic.
+///
+/// Each projection is respanned onto the first field of its type, where the field bound and the
+/// transitive proof in `expand` also land, so a field type that is not `Pod` is reported once.
+fn shape(input: &parse::Input, root: &TokenStream) -> TokenStream {
+    // One binding per distinct field type, and one `(name, binding)` pair per field.
+    let mut distinct = Vec::<String>::new();
+    let mut body = TokenStream::new();
+    let mut fields = TokenStream::new();
+    for f in &input.fields {
+        let key = f.ty.to_string();
+        let index = match distinct.iter().position(|k| *k == key) {
+            Some(index) => index,
+            None => {
+                let at = field_span(&f.ty);
+                body.extend(lex(&format!("let __pod_shape_{} =", distinct.len())));
+                body.extend(respan(lex("<"), at));
+                body.extend(f.ty.clone());
+                body.extend(respan(rooted("as", root, "::Pod>::SHAPE;"), at));
+                distinct.push(key);
+                distinct.len() - 1
+            }
+        };
+        let mut pair = TokenStream::from(TokenTree::Literal(Literal::string(&f.shape_name)));
+        pair.extend(lex(&format!(", __pod_shape_{index}")));
+        fields.extend(delimit(Delimiter::Parenthesis, pair));
+        fields.extend(lex(","));
+    }
+
+    let mut fold = rooted("<() as", root, "::Pod>::__SHAPE_FOLD");
+    if !input.fields.is_empty() {
+        let mut slice = lex("&");
+        slice.extend(delimit(Delimiter::Bracket, fields));
+        fold.extend(lex(".fields"));
+        fold.extend(delimit(Delimiter::Parenthesis, slice));
+    }
+    for param in &input.const_params {
+        // `as u128` is lossless for every type a const parameter can have: an integer, `bool` or
+        // `char`.
+        let mut arg = TokenStream::from(TokenTree::Ident(param.clone()));
+        arg.extend(lex("as u128"));
+        fold.extend(lex(".param"));
+        fold.extend(delimit(Delimiter::Parenthesis, arg));
+    }
+    if let Some(with) = &input.shape_with {
+        // The user's tokens keep their spans, so a value of the wrong type is reported inside
+        // their `#[pod(...)]` as "expected `u64`".
+        fold.extend(lex(".with"));
+        fold.extend(delimit(Delimiter::Parenthesis, with.expr.clone()));
+    }
+    fold.extend(lex(".finish(::core::mem::size_of::<Self>())"));
+    body.extend(fold);
+
+    // `unused_parens` is for a `shape_with` the user had to parenthesise (`(1 << 4)`), as for the
+    // pins.
+    let mut ts = lex("#[allow(unused_parens)] const SHAPE: ::core::option::Option<u64> =");
+    ts.extend(delimit(Delimiter::Brace, body));
+    ts.extend(lex(";"));
+    ts
 }
 
 /// Which layout property a `#[pod(...)]` pin names.

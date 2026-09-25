@@ -148,6 +148,28 @@ The values are `usize` constant expressions. On a generic type they can use the 
 
 Alignment is the one property that can differ between targets: a `u64` is 4-aligned on 32-bit x86. If `align = 8` has to hold everywhere, say so with `#[repr(C, align(8))]`.
 
+## Refusing bytes written against another layout
+
+A size pin cannot see two `u32` fields swapped, or a `u32` retyped as an `i32`: the size is the same, and old bytes read back as the wrong values. Every `Pod` type has `SHAPE`, a 64-bit hash of its field names and types, for a file, replay or wire header to carry and a reader to compare:
+
+```rust
+use portable_pod::Pod;
+
+#[derive(Clone, Copy, Pod)]
+#[repr(C)]
+struct V1 { lo: u32, hi: u32 }
+
+#[derive(Clone, Copy, Pod)]
+#[repr(C)]
+struct V2 { hi: u32, lo: u32 }
+
+assert_ne!(V1::SHAPE, V2::SHAPE);
+```
+
+The derive folds in each field's name and type in order, each const generic parameter's value, and the size; `#[pod(shape_with = <u64>)]` adds anything else, such as the variant table of an enum stored as an integer. A type's own name is left out so that renaming it does not invalidate stored data, which means `Tick(u64)` and `Money(u64)` share a shape. A hand-written impl reports `None` unless it computes one, and `None` spreads to anything containing it.
+
+The value is the same on every target and is a persistence format: the algorithm is documented exactly in the `shape` module and changes only in a semver-major release.
+
 ## Two things to know
 
 **Big-endian targets are refused, not caveated.** `bytes_of` gives you the native representation, so on a big-endian target a `u32`'s bytes would disagree with every little-endian peer — the same across-machine disagreement this crate exists to prevent, and just as invisible to a test suite running on one target. So the crate does not compile there:
