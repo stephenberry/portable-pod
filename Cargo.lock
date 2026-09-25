@@ -18,7 +18,7 @@ checksum = "2ea1cd8a3acfd16db98b557348711772b151166192c5250392601178e5eab257"
 
 [[package]]
 name = "portable-pod"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cross-crate-fixture",
  "nocompile",
@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "portable-pod-derive"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "portable-pod",
 ]
