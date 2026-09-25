@@ -411,6 +411,14 @@ pub unsafe trait Pod: Copy + 'static {
     ///
     /// **The value is a persistence format.** It is the same on every target, and the algorithm
     /// that produces it, documented exactly in [`shape`], changes only in a semver-major release.
+    ///
+    /// # A name clash to know about
+    ///
+    /// This item was added in 0.1.5. If a trait of your own also has an associated item named
+    /// `SHAPE`, then in generic code bounded by both, `T::SHAPE` is ambiguous (error E0034) where it
+    /// used to name yours. Qualify it, `<T as MyTrait>::SHAPE`, which also reads better. Adding a
+    /// defaulted trait item is a minor change under Rust's semver rules for exactly this reason:
+    /// the break is possible, needs a same-named item, and is fixed by one qualification.
     const SHAPE: Option<u64> = None;
 
     /// Where a derived shape fold starts, reached as `<() as Pod>::__SHAPE_FOLD`. Not part of the
@@ -460,28 +468,19 @@ pub fn assert_layout<T: Pod>() {
 }
 
 macro_rules! impl_pod_scalar {
-    ($($t:ty => $tag:expr),* $(,)?) => { $(
+    ($($t:ty: $tag:ident),* $(,)?) => { $(
         // SAFETY: an integer scalar is `Copy`, has no padding, is valid for every bit pattern,
         // and has a width fixed by the type rather than by the target. `usize`/`isize` are
         // excluded precisely because they fail that last point (clause 4).
         unsafe impl Pod for $t {
-            const SHAPE: Option<u64> = shape::scalar($tag);
+            const SHAPE: Option<u64> = shape::scalar(shape::tag::$tag);
         }
     )* };
 }
-impl_pod_scalar!(
-    u8 => shape::tag::U8,
-    u16 => shape::tag::U16,
-    u32 => shape::tag::U32,
-    u64 => shape::tag::U64,
-    u128 => shape::tag::U128,
-    i8 => shape::tag::I8,
-    i16 => shape::tag::I16,
-    i32 => shape::tag::I32,
-    i64 => shape::tag::I64,
-    i128 => shape::tag::I128,
-    () => shape::tag::UNIT,
-);
+// One line, because rustc quotes it in the "the trait `Pod` is implemented for `u32`" help under
+// a field that is not `Pod` (`tests/ui/field_pointer.stderr`).
+#[rustfmt::skip]
+impl_pod_scalar!(u8: U8, u16: U16, u32: U32, u64: U64, u128: U128, i8: I8, i16: I16, i32: I32, i64: I64, i128: I128, (): UNIT);
 
 // SAFETY: an array of `Pod` is contiguous with no padding between elements (element stride is
 // `size_of::<T>()` exactly), so it inherits every clause from `T`.

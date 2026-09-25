@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/portable-pod", "crates/portable-pod-derive"]
+members = ["crates/portable-pod", "crates/portable-pod-derive", "crates/cross-crate-fixture"]
 
 [workspace.package]
 edition = "2024"

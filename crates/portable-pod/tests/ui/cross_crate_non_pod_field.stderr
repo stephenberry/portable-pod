@@ -1,0 +1,107 @@
+error[E0277]: `Header` is not `Pod`, so its bytes are not portable across machines
+  --> tests/ui/cross_crate_non_pod_field.rs:13:9
+   |
+13 |         cross_crate_fixture::record!(Out { pub body: $crate::Header, });
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+...
+16 | mine!();
+   | ------- in this macro invocation
+   |
+help: the trait `Pod` is not implemented for `Header`
+  --> tests/ui/cross_crate_non_pod_field.rs:7:1
+   |
+ 7 | pub struct Header {
+   | ^^^^^^^^^^^^^^^^^
+   = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references
+   = note: not position-independent: `usize`, `isize`, pointers, references, atomics, `Cell`/`RefCell` — use a fixed-width integer such as `u32` or `u64`
+   = note: deliberately excluded: `f32`/`f64`, because NaN payloads are not stable across targets
+   = note: for your own struct, add `#[derive(Pod)]` and `#[repr(C)]`
+   = help: the following other types implement trait `Pod`:
+             ()
+             Out
+             [T; N]
+             cross_crate_fixture::Header
+             i128
+             i16
+             i32
+             i64
+           and $N others
+   = note: this error originates in the macro `cross_crate_fixture::record` which comes from the expansion of the macro `mine` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `Header` is not `Pod`, so its bytes are not portable across machines
+  --> tests/ui/cross_crate_non_pod_field.rs:13:38
+   |
+13 |         cross_crate_fixture::record!(Out { pub body: $crate::Header, });
+   |                                      ^^^ unsatisfied trait bound
+...
+16 | mine!();
+   | ------- in this macro invocation
+   |
+help: the trait `Pod` is not implemented for `Header`
+  --> tests/ui/cross_crate_non_pod_field.rs:7:1
+   |
+ 7 | pub struct Header {
+   | ^^^^^^^^^^^^^^^^^
+   = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references
+   = note: not position-independent: `usize`, `isize`, pointers, references, atomics, `Cell`/`RefCell` — use a fixed-width integer such as `u32` or `u64`
+   = note: deliberately excluded: `f32`/`f64`, because NaN payloads are not stable across targets
+   = note: for your own struct, add `#[derive(Pod)]` and `#[repr(C)]`
+   = help: the following other types implement trait `Pod`:
+             ()
+             Out
+             [T; N]
+             cross_crate_fixture::Header
+             i128
+             i16
+             i32
+             i64
+           and $N others
+note: required for `Out` to implement `Pod`
+  --> tests/ui/cross_crate_non_pod_field.rs:13:9
+   |
+13 |         cross_crate_fixture::record!(Out { pub body: $crate::Header, });
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound introduced here
+...
+16 | mine!();
+   | ------- in this macro invocation
+   = note: this error originates in the macro `mine` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `Header` is not `Pod`, so its bytes are not portable across machines
+  --> tests/ui/cross_crate_non_pod_field.rs:19:45
+   |
+19 |     let _ = cross_crate_fixture::read_pod::<Out>(&[1, 7]);
+   |                                             ^^^ unsatisfied trait bound
+   |
+help: the trait `Pod` is not implemented for `Header`
+  --> tests/ui/cross_crate_non_pod_field.rs:7:1
+   |
+ 7 | pub struct Header {
+   | ^^^^^^^^^^^^^^^^^
+   = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references
+   = note: not position-independent: `usize`, `isize`, pointers, references, atomics, `Cell`/`RefCell` — use a fixed-width integer such as `u32` or `u64`
+   = note: deliberately excluded: `f32`/`f64`, because NaN payloads are not stable across targets
+   = note: for your own struct, add `#[derive(Pod)]` and `#[repr(C)]`
+   = help: the following other types implement trait `Pod`:
+             ()
+             Out
+             [T; N]
+             cross_crate_fixture::Header
+             i128
+             i16
+             i32
+             i64
+           and $N others
+note: required for `Out` to implement `Pod`
+  --> tests/ui/cross_crate_non_pod_field.rs:13:9
+   |
+13 |         cross_crate_fixture::record!(Out { pub body: $crate::Header, });
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound introduced here
+...
+16 | mine!();
+   | ------- in this macro invocation
+note: required by a bound in `read_pod`
+  --> $DIR/src/bytes.rs
+   |
+   | pub fn read_pod<T: Pod>(bytes: &[u8]) -> Option<T> {
+   |                    ^^^ required by this bound in `read_pod`
+   = note: this error originates in the macro `mine` (in Nightly builds, run with -Z macro-backtrace for more info)

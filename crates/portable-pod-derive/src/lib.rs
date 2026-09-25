@@ -71,18 +71,42 @@ fn delimit(delimiter: Delimiter, ts: TokenStream) -> TokenStream {
 /// expansion may name `::portable_pod` directly: a crate that re-exports `Pod` sets this, and a
 /// single hardcoded mention would break the whole point (see the crate docs).
 ///
-/// The caller respans the whole result onto the offending field where that matters, which does
-/// move the user's path tokens too — a deliberate exception to `respan`'s note above. Splicing the
-/// path in un-respanned was tried and is worse: rustc then attributes an unsatisfied bound to the
-/// derive attribute instead of to the field, which is the diagnostic this crate works hardest to
-/// get right (`tests/ui/field_usize.stderr` is the regression test, and it moved). The cost is
-/// that a typo *inside* the path is reported at the field rather than at the typo, which is the
-/// rarer mistake by far.
+/// Where a reference should point at a field, use `rooted_at`, which moves this crate's own tokens
+/// there and leaves a user's path where it was.
 fn rooted(prefix: &str, crate_path: &TokenStream, suffix: &str) -> TokenStream {
     let mut ts = lex(prefix);
     ts.extend(crate_path.clone());
     ts.extend(lex(suffix));
     ts
+}
+
+/// `rooted`, moved onto `span`: the reference to the trait that a diagnostic about one field
+/// should point at.
+///
+/// Only this crate's own tokens move. A path the user gave in `#[pod(crate = ...)]` keeps the
+/// spans it arrived with, because a span is not only a location: `$crate` resolves through it.
+/// Moving `$crate` onto a field that another crate's macro wrote makes it name *that* crate, so
+/// the bound checks whatever `Pod` that crate happens to export, or fails to resolve
+/// (`tests/ui/cross_crate_non_pod_field.rs` pins it; every release through 0.1.4 moved the path).
+/// The default `::portable_pod` is this crate's own token, so it moves, and that is what puts an
+/// unsatisfied bound at the field (`tests/ui/field_usize.stderr`). A user path left in place makes
+/// rustc draw the span from the path to the field instead
+/// (`tests/ui/pod_crate_field_not_pod.stderr`), which is the price of `crate = ...` being correct.
+fn rooted_at(
+    prefix: &str,
+    crate_path: Option<&TokenStream>,
+    suffix: &str,
+    span: Span,
+) -> TokenStream {
+    match crate_path {
+        None => respan(rooted(prefix, &lex("::portable_pod"), suffix), span),
+        Some(path) => {
+            let mut ts = respan(lex(prefix), span);
+            ts.extend(path.clone());
+            ts.extend(respan(lex(suffix), span));
+            ts
+        }
+    }
 }
 
 /// Derive [`Pod`], proving the contract at compile time.
@@ -178,26 +202,31 @@ fn expand(input: &parse::Input) -> TokenStream {
         .crate_path
         .clone()
         .unwrap_or_else(|| lex("::portable_pod"));
+    let user_root = input.crate_path.as_ref();
 
     // Bound every field type. Field types, not generic parameters: an unsatisfied concrete bound
     // (`where bool: Pod`) is a hard error, and the same clause covers generic field types, so the
-    // derive never has to reason about type parameters. Deduplicated so a struct with four `u32`
-    // fields does not emit four identical predicates.
-    let mut seen = Vec::<String>::new();
+    // derive never has to reason about type parameters.
+    //
+    // One bound and one inherited proof per *field*, never merged across fields whose types are
+    // spelled alike. Two spellings that print the same can name different types: `$crate::Header`
+    // prints identically whichever crate's macro produced it, so two fields written that way by
+    // two crates' macros are two types, and merging them left the second unbounded -- a non-`Pod`
+    // field in a `Pod` struct, unsound in every release through 0.1.4. No spelling-based merge can
+    // be proved safe: even without `$crate`, a `macro` (macros 2.0, nightly) resolves a plain
+    // `Header` at its definition site, so identical tokens with no marker at all can still name
+    // two types. The merge was a compile-time saving and it is given up knowingly: DESIGN.md §12
+    // has the cost. `tests/cross_crate.rs` and `tests/ui/cross_crate_non_pod_field.rs` are the
+    // regression tests.
     let mut bounds = TokenStream::new();
     let mut inherit = TokenStream::new();
     for f in &input.fields {
-        let key = f.ty.to_string();
-        if seen.contains(&key) {
-            continue;
-        }
-        seen.push(key);
         // Respan our own tokens onto the field's type so `usize: Pod` is reported at the field,
         // not at the `Pod` in the derive attribute several lines above it. The type's own tokens
         // are extended in verbatim and keep the spans they came with.
         let at = field_span(&f.ty);
         bounds.extend(f.ty.clone());
-        bounds.extend(respan(rooted(":", root, "::Pod,"), at));
+        bounds.extend(rooted_at(":", user_root, "::Pod,", at));
         // Force each field's own layout proof, making the proof transitive.
         //
         // This line is load-bearing and its absence was unsound. A field type's proof is only
@@ -209,7 +238,7 @@ fn expand(input: &parse::Input) -> TokenStream {
         // `Inner<1>`'s layout was ever checked.
         inherit.extend(respan(lex("let _: () = <"), at));
         inherit.extend(f.ty.clone());
-        inherit.extend(respan(rooted("as", root, "::Pod>::__LAYOUT_OK;"), at));
+        inherit.extend(rooted_at("as", user_root, "::Pod>::__LAYOUT_OK;", at));
     }
 
     // `Pod: Copy`, so the impl must prove `Self: Copy` -- and for a generic type with a *derived*
@@ -370,16 +399,15 @@ fn expand(input: &parse::Input) -> TokenStream {
 /// are documented on `portable_pod::shape`, and DESIGN.md §12 has the reasoning.
 ///
 /// ```text
-/// const SHAPE: Option<u64> = {
-///     let __pod_shape_0 = <u32 as Pod>::SHAPE;
-///     let __pod_shape_1 = <[u8; 4] as Pod>::SHAPE;
-///     <() as Pod>::__SHAPE_FOLD
-///         .fields(&[("a", __pod_shape_0), ("b", __pod_shape_1), ("c", __pod_shape_0)])
-///         .param(N as u128)
-///         .with(<shape_with>)
-///         .finish(size_of::<Self>())
-/// };
+/// const SHAPE: Option<u64> = <() as Pod>::__SHAPE_FOLD
+///     .fields(&[("a", <u32 as Pod>::SHAPE), ("b", <[u8; 4] as Pod>::SHAPE)])
+///     .param(N as u128)
+///     .with(<shape_with>)
+///     .finish(size_of::<Self>());
 /// ```
+///
+/// (Every path in the real expansion is absolute, `::core::primitive::u64` and so on, so a
+/// `type u64 = u32;` in the user's scope changes nothing; `shadowed_names` in `tests/shape.rs`.)
 ///
 /// Three decisions are in that shape:
 ///
@@ -387,38 +415,35 @@ fn expand(input: &parse::Input) -> TokenStream {
 ///   `portable_pod::shape::Fold`, and method calls on it resolve without naming that type's path,
 ///   so the expansion still names nothing but `<root>::Pod`, which is all `#[pod(crate = ...)]`
 ///   asks a re-exporting crate to provide.
-/// * **One projection per distinct field type, one call for all the fields.** The cost of this
-///   const is type-checking it, at every derive, whether or not anything reads it; evaluating it
-///   is noise by comparison. A `.field(..)` call per field, each with its own projection, cost
-///   about two and a half times as much at 48 fields (DESIGN.md §12 has the numbers).
+/// * **One call for all the fields.** The cost of this const is type-checking it, at every
+///   derive, whether or not anything reads it; evaluating it is noise by comparison. A `.field(..)`
+///   method call per field cost measurably more than one `.fields(&[..])` call (DESIGN.md §12).
+///   Each field has its own projection, never one shared by fields spelled alike: see the bounds
+///   in `expand` for why that sharing was unsound.
 /// * **No assertion, and no forced layout proof.** A const panic site costs compile time at every
 ///   derive (§5.1). Forcing `__LAYOUT_OK` here would be redundant, since a shape is only useful
 ///   beside bytes an entry point produced and every entry point forces it, and it would add a
 ///   second "erroneous constant" trail to every padding diagnostic.
 ///
-/// Each projection is respanned onto the first field of its type, where the field bound and the
-/// transitive proof in `expand` also land, so a field type that is not `Pod` is reported once.
+/// Each projection is respanned onto its field, where the field bound and the transitive proof in
+/// `expand` also land, so rustc reports a field type that is not `Pod` once per field.
 fn shape(input: &parse::Input, root: &TokenStream) -> TokenStream {
-    // One binding per distinct field type, and one `(name, binding)` pair per field.
-    let mut distinct = Vec::<String>::new();
-    let mut body = TokenStream::new();
+    // One `(name, <Field as Pod>::SHAPE)` pair per field, never shared between fields whose types
+    // are spelled alike, for the reason given at the bounds in `expand`: a shared projection
+    // would give `$crate::Header` from two crates the same shape.
     let mut fields = TokenStream::new();
     for f in &input.fields {
-        let key = f.ty.to_string();
-        let index = match distinct.iter().position(|k| *k == key) {
-            Some(index) => index,
-            None => {
-                let at = field_span(&f.ty);
-                body.extend(lex(&format!("let __pod_shape_{} =", distinct.len())));
-                body.extend(respan(lex("<"), at));
-                body.extend(f.ty.clone());
-                body.extend(respan(rooted("as", root, "::Pod>::SHAPE;"), at));
-                distinct.push(key);
-                distinct.len() - 1
-            }
-        };
+        let at = field_span(&f.ty);
         let mut pair = TokenStream::from(TokenTree::Literal(Literal::string(&f.shape_name)));
-        pair.extend(lex(&format!(", __pod_shape_{index}")));
+        pair.extend(lex(","));
+        pair.extend(respan(lex("<"), at));
+        pair.extend(f.ty.clone());
+        pair.extend(rooted_at(
+            "as",
+            input.crate_path.as_ref(),
+            "::Pod>::SHAPE",
+            at,
+        ));
         fields.extend(delimit(Delimiter::Parenthesis, pair));
         fields.extend(lex(","));
     }
@@ -434,7 +459,7 @@ fn shape(input: &parse::Input, root: &TokenStream) -> TokenStream {
         // `as u128` is lossless for every type a const parameter can have: an integer, `bool` or
         // `char`.
         let mut arg = TokenStream::from(TokenTree::Ident(param.clone()));
-        arg.extend(lex("as u128"));
+        arg.extend(lex("as ::core::primitive::u128"));
         fold.extend(lex(".param"));
         fold.extend(delimit(Delimiter::Parenthesis, arg));
     }
@@ -445,12 +470,12 @@ fn shape(input: &parse::Input, root: &TokenStream) -> TokenStream {
         fold.extend(delimit(Delimiter::Parenthesis, with.expr.clone()));
     }
     fold.extend(lex(".finish(::core::mem::size_of::<Self>())"));
-    body.extend(fold);
 
     // `unused_parens` is for a `shape_with` the user had to parenthesise (`(1 << 4)`), as for the
     // pins.
-    let mut ts = lex("#[allow(unused_parens)] const SHAPE: ::core::option::Option<u64> =");
-    ts.extend(delimit(Delimiter::Brace, body));
+    let mut ts = lex("#[allow(unused_parens)] \
+         const SHAPE: ::core::option::Option<::core::primitive::u64> =");
+    ts.extend(fold);
     ts.extend(lex(";"));
     ts
 }
@@ -559,7 +584,7 @@ fn pin_check(input: &parse::Input, what: Pinned, pin: &parse::Pin) -> TokenStrea
     );
     // Bound to a typed `let` first, so an expression of the wrong type is reported as "expected
     // `usize`" at the expression, and so the comparison needs no parentheses around user tokens.
-    let mut ts = lex("#[allow(unused_parens)] let __pod_pinned: usize =");
+    let mut ts = lex("#[allow(unused_parens)] let __pod_pinned: ::core::primitive::usize =");
     ts.extend(pin.expr.clone());
     ts.extend(lex(";"));
     let mut args = lex("::core::mem::");

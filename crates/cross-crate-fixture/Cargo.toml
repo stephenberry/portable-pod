@@ -1,0 +1,16 @@
+[package]
+name = "cross-crate-fixture"
+description = "Test fixture for portable-pod: a second crate whose macro derives `Pod`. Not published."
+publish = false
+edition.workspace = true
+version = "0.0.0"
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# No default features, and the derive taken from its own crate rather than through `portable-pod`'s
+# `derive` feature: this crate is a dev-dependency of `portable-pod`, and any feature it enabled
+# would unify into `portable-pod`'s own test builds, so CI's `--no-default-features` runs would
+# quietly test the default configuration.
+portable-pod = { path = "../portable-pod", default-features = false }
+portable-pod-derive = { path = "../portable-pod-derive" }

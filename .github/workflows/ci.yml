@@ -121,6 +121,10 @@ jobs:
       - run: cargo miri test -p portable-pod --lib --all-features
       - run: cargo miri test -p portable-pod --test derive --all-features
       - run: cargo miri test -p portable-pod --test portability --all-features
+      # `read_pod` over a struct that another crate's macro declared: the shape of the unsoundness
+      # fixed in 0.1.5, where a field was never bounded `Pod` and a byte became an invalid `bool`.
+      - run: cargo miri test -p portable-pod --test cross_crate --all-features
+      - run: cargo miri test -p portable-pod --test shape --all-features
 
   msrv:
     name: msrv

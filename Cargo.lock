@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "cross-crate-fixture"
+version = "0.0.0"
+dependencies = [
+ "portable-pod",
+ "portable-pod-derive",
+]
+
+[[package]]
 name = "nocompile"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12,6 +20,7 @@ checksum = "2ea1cd8a3acfd16db98b557348711772b151166192c5250392601178e5eab257"
 name = "portable-pod"
 version = "0.1.4"
 dependencies = [
+ "cross-crate-fixture",
  "nocompile",
  "portable-pod-derive",
 ]

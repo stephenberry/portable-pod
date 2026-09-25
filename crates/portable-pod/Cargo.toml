@@ -4,6 +4,9 @@ description = "Plain-old-data types with a target-independent layout. Like bytem
 categories = ["no-std", "encoding", "game-development"]
 keywords = ["pod", "bytes", "determinism", "no_std", "layout"]
 readme = "../../README.md"
+# The cross-crate regression tests need `cross-crate-fixture`, which is not published, so the
+# published package leaves them out rather than ship tests that cannot build.
+exclude = ["tests/cross_crate.rs", "tests/ui/cross_crate_*"]
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -37,6 +40,11 @@ portable-pod-derive = { workspace = true, optional = true }
 # re-blessing and is what keeps this suite reproducible for a contributor whose machine is not
 # shaped like CI's. The dependency's git history has the details.
 nocompile = "0.6"
+# A second crate whose macro derives `Pod`, for the regression test of fields whose types are
+# spelled alike but resolve in different crates (`tests/cross_crate.rs`). Unpublished and
+# path-only, so `cargo publish` drops it; like the derive's dev-dependency on this crate, the cycle
+# is one Cargo permits.
+cross-crate-fixture = { path = "../cross-crate-fixture" }
 
 [features]
 default = ["derive", "alloc"]

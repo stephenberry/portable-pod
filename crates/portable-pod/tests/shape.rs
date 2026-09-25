@@ -434,6 +434,26 @@ mod generics {
         );
     }
 
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    pub struct AsBool<const P: bool> {
+        pub x: u8,
+    }
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    pub struct AsU8<const P: u8> {
+        pub x: u8,
+    }
+
+    /// Documented in `portable_pod::shape`: a parameter contributes its value widened to 128 bits,
+    /// not its type.
+    #[test]
+    fn a_const_parameters_type_is_not_folded() {
+        assert_eq!(AsBool::<true>::SHAPE, AsU8::<1>::SHAPE);
+        assert_eq!(AsBool::<false>::SHAPE, AsU8::<0>::SHAPE);
+    }
+
     #[test]
     fn shape_with_can_name_parameters() {
         assert_eq!(
@@ -484,4 +504,52 @@ fn shapes_are_constants() {
     const HEADER: Option<u64> = Header::SHAPE;
     const TABLE: [Option<u64>; 2] = [Header::SHAPE, Nested::SHAPE];
     assert_eq!(HEADER, TABLE[0]);
+}
+
+/// The expansion names every type by its absolute path, so a scope that rebinds the primitive and
+/// prelude names it uses changes nothing. For these types compiling is most of the assertion.
+#[allow(non_camel_case_types, dead_code)]
+mod shadowed_names {
+    use portable_pod::Pod;
+
+    type u64 = u32;
+    type u128 = u8;
+    type usize = u16;
+    pub struct Option;
+    pub struct Some;
+    pub struct None;
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    #[pod(size = 8, shape_with = 7)]
+    pub struct Concrete {
+        pub a: u64,
+        pub b: u64,
+    }
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    #[pod(size = 4 * N, shape_with = 7)]
+    pub struct Generic<const N: core::primitive::usize> {
+        pub a: [u64; N],
+    }
+
+    #[test]
+    fn shapes_are_unaffected() {
+        use portable_pod::shape::Fold;
+        let expected = Fold::new()
+            .field("a", <u32 as Pod>::SHAPE)
+            .field("b", <u32 as Pod>::SHAPE)
+            .with(7)
+            .finish(8);
+        assert_eq!(<Concrete as Pod>::SHAPE, expected);
+        assert_eq!(
+            <Generic<2> as Pod>::SHAPE,
+            Fold::new()
+                .field("a", <[u32; 2] as Pod>::SHAPE)
+                .param(2)
+                .with(7)
+                .finish(8)
+        );
+    }
 }

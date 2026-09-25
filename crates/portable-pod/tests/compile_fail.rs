@@ -27,6 +27,14 @@
 fn ui() {
     let mut t = nocompile::cases!();
     t.dependency_path("portable-pod", ".");
+    // Present in the repository, absent from the published package, which also leaves out the one
+    // fixture that uses it (see `exclude` in `Cargo.toml`).
+    if std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../cross-crate-fixture")
+        .exists()
+    {
+        t.dependency_path("cross-crate-fixture", "../cross-crate-fixture");
+    }
     t.compile_fail_dir("tests/ui");
     t.assert();
 }
