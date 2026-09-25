@@ -3,7 +3,9 @@ name = "portable-pod-derive"
 description = "Derive macro for portable-pod. Proves the Pod contract at compile time."
 readme = "../../README.md"
 edition.workspace = true
-version.workspace = true
+# Not the workspace version: the derive is versioned on its own, and the runtime pins it with `=`.
+# See `[workspace.dependencies]` in the root manifest.
+version = "0.1.4"
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
