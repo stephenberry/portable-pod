@@ -170,6 +170,8 @@ The derive folds in each field's name and type in order, each const generic para
 
 The value is the same on every target and is a persistence format: the algorithm is documented exactly in the `shape` module and changes only in a semver-major release.
 
+One thing to know when upgrading: if a trait of yours also has an associated item named `SHAPE`, `T::SHAPE` in generic code bounded by both traits becomes ambiguous (error E0034). Write `<T as MyTrait>::SHAPE`.
+
 ## Two things to know
 
 **Big-endian targets are refused, not caveated.** `bytes_of` gives you the native representation, so on a big-endian target a `u32`'s bytes would disagree with every little-endian peer — the same across-machine disagreement this crate exists to prevent, and just as invisible to a test suite running on one target. So the crate does not compile there:
@@ -224,6 +226,12 @@ A hostile input that injects `0x7f` produces a *different value*, never undefine
 The crate is `no_std` unconditionally, and it has **zero dependencies with no footnote attached** — not "zero at runtime", not "zero unless you use the derive". A plain `cargo add portable-pod`, default features and all, builds this crate and its own derive and nothing else. The derive is written against `proc_macro`, which ships with the compiler like `core` and `alloc`, so there is no `syn`, no `quote`, no `proc-macro2`.
 
 CI asserts this in all three configurations, so it cannot quietly regress: `cargo tree -e normal` is one line for `-p portable-pod --no-default-features`, one line for `-p portable-pod-derive`, and two for `-p portable-pod --all-features`.
+
+## Versions
+
+`portable-pod` and `portable-pod-derive` are released together and must be used together: each runtime release depends on exactly one derive version (`=`), because the derive's expansion names items of the runtime it ships with. Depend on `portable-pod` only and let it choose the derive; never add or update `portable-pod-derive` on its own.
+
+The two carry different version numbers. The derive that emits `Pod::SHAPE` is 0.2.0, paired with runtime 0.1.5, so that a project still on runtime 0.1.4, which accepts any `0.1.x` derive, cannot be moved onto it by `cargo update -p portable-pod-derive` or a bot and fail to compile.
 
 ## License
 

@@ -12,11 +12,22 @@
 //!
 //! | Folded in | Not folded in |
 //! | --- | --- |
-//! | each field's name, in declaration order (a tuple field's index, as `"0"`, `"1"`, …) | the type's own name |
+//! | each field's name, in declaration order | the type's own name |
 //! | each field type's shape | the `repr` (`C` or `transparent`) and any `align(N)` |
 //! | each const generic parameter's value, in declaration order | alignment, which varies by target |
 //! | the value of `#[pod(shape_with = …)]`, if given | field visibility and attributes |
 //! | `size_of::<Self>()` | the names of generic parameters |
+//! | | a const generic parameter's *type* |
+//!
+//! A field's name is its identifier as rustc holds it: NFC-normalized, as rustc normalizes every
+//! identifier, and without a raw identifier's `r#` (`r#type` is `type`). A tuple field's name is
+//! its index in decimal, `"0"`, `"1"`, ….
+//!
+//! Because a const parameter contributes its value but not its type, parameters of different types
+//! whose values widen to the same 128 bits (below) are indistinguishable: `S<true>` with
+//! `const B: bool` and `S<1>` with `const B: u8` share a shape, as do `-1` as an `i8` and
+//! `u128::MAX`. Changing a parameter's type without changing what it means is therefore not a
+//! change, and changing what it means should come with a new name anyway.
 //!
 //! So reordering, renaming or retyping a field changes the shape even where the size does not,
 //! and so does wrapping a field in a newtype (`u64` to `Tick(u64)`). Renaming a *type* does not:
@@ -55,7 +66,9 @@
 //!
 //! A name's bytes are its UTF-8, packed eight to a word in little-endian order, with the last word
 //! zero-filled; an empty name contributes no words after its length. Integers (`len`, `size`) are
-//! absorbed as `u64`. The shape is the state after the last word.
+//! absorbed as `u64`. A const parameter's value is first widened to 128 bits, as Rust's `as u128`
+//! does: an unsigned integer zero-extends, a signed one sign-extends (two's complement), `bool` is
+//! `0` or `1`, and `char` is its Unicode scalar value. The shape is the state after the last word.
 //!
 //! Every record opens with its own kind word and has a length fixed by what precedes it, so two
 //! different structures always absorb different word sequences; two shapes agree only by a 64-bit
