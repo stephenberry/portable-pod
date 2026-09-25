@@ -1,0 +1,7 @@
+error: a `<` in a `size` value is read as the start of generic arguments. Wrap a shift or a comparison in parentheses: `#[pod(size = (1 << 4))]`.
+ --> tests/ui/pod_size_bare_shift.rs:6:23
+  |
+6 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

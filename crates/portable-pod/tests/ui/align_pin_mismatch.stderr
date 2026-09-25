@@ -1,0 +1,5 @@
+error[E0308]: mismatched types
+ --> tests/ui/align_pin_mismatch.rs:7:26
+  |
+7 | #[pod(size = 16, align = 16)]
+  |                          ^^ expected an array with a size of 16, found one with a size of 4

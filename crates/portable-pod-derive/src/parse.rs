@@ -75,6 +75,17 @@ pub struct Input {
     /// here, so a crate that re-exports the trait can be named instead of `::portable_pod`.
     /// `expand` supplies the default.
     pub crate_path: Option<TokenStream>,
+    /// The expression from `#[pod(size = ...)]`, if given: the size the type must have.
+    pub size: Option<Pin>,
+    /// The expression from `#[pod(align = ...)]`, if given: the alignment the type must have.
+    pub align: Option<Pin>,
+}
+
+/// A `size` or `align` pin: a `usize` constant expression, captured uninspected like a field type.
+pub struct Pin {
+    pub expr: TokenStream,
+    /// The expression's first token, inside the user's attribute: where a mismatch is reported.
+    pub span: Span,
 }
 
 /// Is this `>` the tail of `->` or `=>` rather than a closing angle bracket?
@@ -210,25 +221,33 @@ struct Repr {
 /// Everything the derive reads off the item's attributes.
 struct Attrs {
     repr: Repr,
+    pod: PodArgs,
+}
+
+/// The arguments of every `#[pod(...)]` attribute on the item, merged.
+#[derive(Default)]
+struct PodArgs {
     /// The path from `#[pod(crate = ...)]`, if one was given.
     crate_path: Option<TokenStream>,
+    size: Option<Pin>,
+    align: Option<Pin>,
 }
+
+/// The arguments `#[pod(...)]` accepts, spelled out for every diagnostic that lists them.
+const POD_ARGS: &str =
+    "`crate`, `size` and `align`, as `#[pod(crate = ::my_crate, size = 16, align = 8)]`";
 
 /// Parse one `#[pod(...)]` attribute's arguments.
 ///
-/// The only key is `crate`, whose value is a *path* (`::my_engine::mem`), not a string. Every
-/// reference the expansion emits is rooted at it, so this is what lets a crate re-export `Pod`
-/// and have the derive keep working through the re-export.
-fn parse_pod_attr(
-    head: &Ident,
-    args: Option<&TokenTree>,
-    seen: &mut Option<TokenStream>,
-) -> Result<(), Error> {
+/// `crate` takes a *path* (`::my_engine::mem`), not a string. Every reference the expansion emits
+/// is rooted at it, so this is what lets a crate re-export `Pod` and have the derive keep working
+/// through the re-export. `size` and `align` each take a `usize` constant expression, pinning the
+/// layout the type must have.
+fn parse_pod_attr(head: &Ident, args: Option<&TokenTree>, seen: &mut PodArgs) -> Result<(), Error> {
     let Some(TokenTree::Group(g)) = args else {
         return Err(Error::new(
             head.span(),
-            "`#[pod]` takes arguments: the only one is `crate`, as `#[pod(crate = ::my_crate)]`, \
-             naming the path that exports `Pod`.",
+            format!("`#[pod]` takes arguments: {POD_ARGS}."),
         ));
     };
     let inner: Vec<TokenTree> = g.stream().into_iter().collect();
@@ -237,28 +256,48 @@ fn parse_pod_attr(
         let TokenTree::Ident(key) = &arg[0] else {
             return Err(Error::new(
                 arg[0].span(),
-                "expected `crate = <path>` inside `#[pod(...)]`",
-            ));
-        };
-        if !is(key, "crate") {
-            return Err(Error::new(
-                key.span(),
                 format!(
-                    "unknown `#[pod]` argument `{key}`. The only one is `crate`, as \
-                     `#[pod(crate = ::my_crate)]`."
+                    "expected `<argument> = <value>` inside `#[pod(...)]`. The arguments are {POD_ARGS}."
                 ),
             ));
-        }
-        // A missing `=` and a missing path are one mistake to a reader, so they get one message.
-        let path = match arg.get(1) {
+        };
+        let wanted = if is(key, "crate") {
+            "a path: write `#[pod(crate = ::my_crate)]`"
+        } else if is(key, "size") {
+            "the size in bytes: write `#[pod(size = 16)]`"
+        } else if is(key, "align") {
+            "the alignment in bytes: write `#[pod(align = 8)]`"
+        } else {
+            return Err(Error::new(
+                key.span(),
+                format!("unknown `#[pod]` argument `{key}`. The arguments are {POD_ARGS}."),
+            ));
+        };
+        // A missing `=` and a missing value are one mistake to a reader, so they get one message.
+        let value = match arg.get(1) {
             Some(TokenTree::Punct(p)) if p.as_char() == '=' && arg.len() > 2 => &arg[2..],
             _ => {
-                return Err(Error::new(
-                    key.span(),
-                    "`crate` needs a path: write `#[pod(crate = ::my_crate)]`.",
-                ));
+                return Err(Error::new(key.span(), format!("`{key}` needs {wanted}.")));
             }
         };
+        if !is(key, "crate") {
+            let slot = if is(key, "size") {
+                &mut seen.size
+            } else {
+                &mut seen.align
+            };
+            if slot.is_some() {
+                return Err(Error::new(
+                    key.span(),
+                    format!(
+                        "`{key}` is given more than once; keep a single `#[pod({key} = ...)]`."
+                    ),
+                ));
+            }
+            *slot = Some(parse_pin(key, value)?);
+            continue;
+        }
+        let path = value;
         // No literal can begin a path, so any literal here is the mistake -- test the token kind
         // rather than the quoting, or a raw string, a byte string and a bare number all fall
         // through into the expansion and surface as `proc-macro derive produced unparsable
@@ -281,15 +320,57 @@ fn parse_pod_attr(
                 },
             ));
         }
-        if seen.is_some() {
+        if seen.crate_path.is_some() {
             return Err(Error::new(
                 key.span(),
                 "`crate` is given more than once; keep a single `#[pod(crate = ...)]`.",
             ));
         }
-        *seen = Some(path.iter().cloned().collect());
+        seen.crate_path = Some(path.iter().cloned().collect());
     }
     Ok(())
+}
+
+/// Capture a `size` or `align` value.
+///
+/// The value is an expression, re-emitted verbatim, so it may name constants and, on a generic
+/// type, the type's own parameters (`size = 4 * N + 4`). The one thing to catch here is a `<`
+/// used as an operator. `split_commas` has no way to tell `1 << 4` from the opening of generic
+/// arguments, so it reads the shift as two unclosed brackets, and a `, align = 8` after it would
+/// be swallowed into the size expression and surface as a baffling parse error in the expansion.
+/// Refusing any value whose angle brackets do not balance catches that case and the unclosed
+/// comparison alike, and parenthesising is the fix for both: inside a group, `split_commas` never
+/// looks.
+fn parse_pin(key: &Ident, value: &[TokenTree]) -> Result<Pin, Error> {
+    let mut depth = 0usize;
+    let mut first_open = None;
+    for (k, t) in value.iter().enumerate() {
+        if let TokenTree::Punct(p) = t {
+            match p.as_char() {
+                '<' => {
+                    depth += 1;
+                    first_open.get_or_insert(p.span());
+                }
+                '>' if depth > 0 && !is_arrow_tail(k.checked_sub(1).map(|j| &value[j])) => {
+                    depth -= 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    if depth != 0 {
+        return Err(Error::new(
+            first_open.unwrap_or_else(|| key.span()),
+            format!(
+                "a `<` in a `{key}` value is read as the start of generic arguments. Wrap a shift \
+                 or a comparison in parentheses: `#[pod({key} = (1 << 4))]`."
+            ),
+        ));
+    }
+    Ok(Pin {
+        expr: value.iter().cloned().collect(),
+        span: value[0].span(),
+    })
 }
 
 /// The tokens inside an attribute's brackets. A `#[$m:meta]` written in a `macro_rules!` arrives with
@@ -310,7 +391,7 @@ fn scan_attrs(toks: &[TokenTree], i: &mut usize) -> Result<Attrs, Error> {
         packed: false,
         span: None,
     };
-    let mut crate_path: Option<TokenStream> = None;
+    let mut pod = PodArgs::default();
     while *i + 1 < toks.len() {
         let TokenTree::Punct(p) = &toks[*i] else {
             break;
@@ -340,12 +421,12 @@ fn scan_attrs(toks: &[TokenTree], i: &mut usize) -> Result<Attrs, Error> {
                     }
                 }
             } else if is(head, "pod") {
-                parse_pod_attr(head, inner.get(1), &mut crate_path)?;
+                parse_pod_attr(head, inner.get(1), &mut pod)?;
             }
         }
         *i += 2;
     }
-    Ok(Attrs { repr, crate_path })
+    Ok(Attrs { repr, pod })
 }
 
 /// Split a generic parameter list into declaration form and use form.
@@ -464,7 +545,7 @@ pub fn parse(ts: TokenStream) -> Result<Input, Error> {
     let toks: Vec<TokenTree> = ts.into_iter().collect();
     let mut i = 0usize;
 
-    let Attrs { repr, crate_path } = scan_attrs(&toks, &mut i)?;
+    let Attrs { repr, pod } = scan_attrs(&toks, &mut i)?;
     skip_vis(&toks, &mut i);
 
     let Some(TokenTree::Ident(kw)) = toks.get(i).cloned() else {
@@ -586,6 +667,8 @@ pub fn parse(ts: TokenStream) -> Result<Input, Error> {
         where_predicates: where_toks.into_iter().collect(),
         fields,
         is_concrete,
-        crate_path,
+        crate_path: pod.crate_path,
+        size: pod.size,
+        align: pod.align,
     })
 }
