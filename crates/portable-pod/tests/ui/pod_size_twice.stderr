@@ -1,5 +1,5 @@
-error: unknown `#[pod]` argument `krate`. The arguments are `crate`, `size` and `align`, as `#[pod(crate = ::my_crate, size = 16, align = 8)]`.
- --> tests/ui/pod_unknown_key.rs:4:23
+error: `size` is given more than once; keep a single `#[pod(size = ...)]`.
+ --> tests/ui/pod_size_twice.rs:4:23
   |
 4 | #[derive(Clone, Copy, Pod)]
   |                       ^^^

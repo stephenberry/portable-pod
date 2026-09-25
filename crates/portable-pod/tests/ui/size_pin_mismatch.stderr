@@ -1,0 +1,5 @@
+error[E0308]: mismatched types
+ --> tests/ui/size_pin_mismatch.rs:8:14
+  |
+8 | #[pod(size = 12)]
+  |              ^^ expected an array with a size of 12, found one with a size of 16

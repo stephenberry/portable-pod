@@ -117,6 +117,37 @@ fn main() {}
 
 The value is a **path**, not a string. `serde` and `bytemuck` spell their equivalents with quotes; writing quotes here is an error that tells you to drop them.
 
+## Pinning the layout
+
+The derive proves there is no padding. It cannot tell whether the layout is the one your bytes were written against: add a field, widen one, or drop an `align(16)`, and the type is still padding-free while every checksum, save file and wire message built on it has changed meaning. Where that matters, pin it:
+
+```rust
+use portable_pod::Pod;
+
+#[derive(Clone, Copy, Pod)]
+#[repr(C)]
+#[pod(size = 16, align = 8)]
+struct Record {
+    id: u64,
+    kind: u32,
+    flags: u32,
+}
+```
+
+A pin that holds costs nothing at run time. One that doesn't is a compile error at the pinned value, and it names the real size:
+
+```text
+error[E0308]: mismatched types
+ --> src/wire.rs:3:14
+  |
+3 | #[pod(size = 12)]
+  |              ^^ expected an array with a size of 12, found one with a size of 16
+```
+
+The values are `usize` constant expressions. On a generic type they can use the type's parameters, `#[pod(size = 4 * N + 4)]`, and are checked per instantiation like the padding proof. Parenthesise a shift, `size = (1 << 4)`, since a bare `<` reads as generic arguments.
+
+Alignment is the one property that can differ between targets: a `u64` is 4-aligned on 32-bit x86. If `align = 8` has to hold everywhere, say so with `#[repr(C, align(8))]`.
+
 ## Two things to know
 
 **Big-endian targets are refused, not caveated.** `bytes_of` gives you the native representation, so on a big-endian target a `u32`'s bytes would disagree with every little-endian peer — the same across-machine disagreement this crate exists to prevent, and just as invisible to a test suite running on one target. So the crate does not compile there:

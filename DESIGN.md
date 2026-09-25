@@ -139,7 +139,7 @@ Overclaiming here would be easy and wrong. `usize` is excluded not because byte 
 
 ## 7. Testing
 
-The compile-fail suite is the primary deliverable, not a supplement: a derive that accepts an unsound type is worse than a hand-written `unsafe impl`, because it launders a bad assertion through machinery that looks authoritative. 25 fixtures in `tests/ui/`, covering each clause, with `field_usize.rs` as the one that distinguishes this crate from `bytemuck`.
+The compile-fail suite is the primary deliverable, not a supplement: a derive that accepts an unsound type is worse than a hand-written `unsafe impl`, because it launders a bad assertion through machinery that looks authoritative. 32 fixtures in `tests/ui/`, covering each clause, with `field_usize.rs` as the one that distinguishes this crate from `bytemuck`.
 
 Beyond it: `tests/derive.rs` for the positive direction, `tests/portability.rs` for the cross-width property, Miri over the unsafe blocks, and a `cargo tree` assertion that the runtime crate has no dependencies at all.
 
@@ -174,7 +174,19 @@ So the derive emits `T: ::core::marker::Copy` for each **type** parameter. `Copy
 
 The bug survived first release because both generic fixtures in `tests/derive.rs` happened to declare the bound inline (`Queue<T: Copy, const N: usize>`, `Guarded<T> where T: Copy`), and the derive copies a struct's own parameter list verbatim into the impl. Putting bounds on the impls instead of the struct is the more common style and was entirely unrepresented. `Unbounded` and `Mixed` now cover both, and `Mixed` is deliberately never constructed — for it, compiling *is* the assertion, since either wrong parameter kind fails the file rather than a test body.
 
-## 11. Non-goals
+## 11. Size and alignment pins
+
+The padding proof answers "are there gaps?", not "is this the layout the bytes were written against?". A type can change size and stay padding-free, and for a crate whose reason to exist is bytes that agree across machines, a silent size change is the same failure moved in time: this build disagrees with last month's save file instead of with another target. Users were writing a runtime `assert_eq!(size_of::<T>(), N)` test beside nearly every such type to catch it. That test is a compile-time fact checked at run time, in a test binary, on whichever targets happen to run tests. `#[pod(size = N, align = A)]` moves it to the definition, where every build of every target checks it.
+
+Three decisions in it:
+
+- **A type error, not an assertion, for a concrete type.** The check is `let _: [(); N] = [(); size_of::<T>()];`. Array lengths are compared during type checking, so `cargo check` reports it, and rustc renders both lengths: "expected an array with a size of 12, found one with a size of 16". The second number is what someone updating a pin needs, and an `assert!` in a const cannot print it, because const panics cannot format integers. The generated tokens are respanned onto the pinned value, so the error lands inside the user's attribute. The wording says "size" even for an alignment pin; pointing at `align = 16` makes that readable, and a clearer message would cost the found value.
+- **An assertion for a generic type.** An array length may not depend on a generic parameter, so the pin is an `assert!` inside `__LAYOUT_OK` and is checked per instantiation, exactly as the padding proof is (§3). rustc names the failing instantiation, so the message says what was pinned; it cannot say what was found.
+- **Values are expressions, captured as tokens and re-emitted.** That keeps the no-`syn` rule of §5, lets a pin name a constant, and lets a generic pin be an identity over its parameters (`size = 4 * N + 4`) rather than one number. The cost is the one ambiguity token-level splitting has: `<` is indistinguishable from a generic-argument opener, so `size = 1 << 4, align = 8` would swallow the `align`. A value whose angle brackets do not balance is refused with the parenthesised spelling (`tests/ui/pod_size_bare_shift.rs`); a `>` or `>>` cannot unbalance anything and is accepted.
+
+Alignment is the one pinnable property that is not portable by construction: a padding-free type's size is the sum of its fields everywhere, but a `u64`'s alignment is 8 on 64-bit targets and 4 on 32-bit x86. An `align = 8` pin failing on i686 is therefore correct, not a false positive, and the answer is `repr(C, align(8))`. The docs say so rather than weakening the pin.
+
+## 12. Non-goals
 
 - Competing with `bytemuck`. If your bytes never leave the machine, use it.
 - Floats. Excluded by clause 2, because NaN payloads are not stable across targets.

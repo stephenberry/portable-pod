@@ -1,4 +1,4 @@
-//! The only `#[pod]` argument is `crate`. Anything else is rejected by name.
+//! The `#[pod]` arguments are `crate`, `size` and `align`. Anything else is rejected by name.
 use portable_pod::Pod;
 
 #[derive(Clone, Copy, Pod)]

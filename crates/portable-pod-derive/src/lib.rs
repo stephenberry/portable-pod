@@ -108,6 +108,15 @@ fn rooted(prefix: &str, crate_path: &TokenStream, suffix: &str) -> TokenStream {
 /// ``cannot find `portable_pod` in the crate root``. The value is a path, not a string, and only
 /// the `Pod` trait has to be reachable there. See the crate docs for a worked example.
 ///
+/// # Pinning the size and alignment
+///
+/// `#[pod(size = <expr>)]` and `#[pod(align = <expr>)]` state the layout outright, so a change that
+/// keeps the type padding-free but moves its bytes (a field added, widened, or reordered across an
+/// alignment boundary) fails the build instead of silently changing every checksum and file built
+/// on it. Each value is a `usize` constant expression; on a generic type it may name the type's
+/// parameters and is checked per instantiation. They combine with `crate` in one attribute or
+/// several. See the crate docs, "Pinning the layout".
+///
 /// # Padding must be eliminated, not excused
 ///
 /// There is no opt-out. An earlier version of this crate offered
@@ -296,6 +305,13 @@ fn expand(input: &parse::Input) -> TokenStream {
     checks.extend(delimit(Delimiter::Parenthesis, assert_args));
     checks.extend(lex(";"));
 
+    if let Some(pin) = &input.size {
+        checks.extend(pin_check(input, Pinned::Size, pin));
+    }
+    if let Some(pin) = &input.align {
+        checks.extend(pin_check(input, Pinned::Align, pin));
+    }
+
     // `const __LAYOUT_OK: () = { <inherit> <checks> };`
     let mut proof = inherit;
     proof.extend(checks);
@@ -329,4 +345,121 @@ fn expand(input: &parse::Input) -> TokenStream {
     }
 
     out
+}
+
+/// Which layout property a `#[pod(...)]` pin names.
+#[derive(Clone, Copy)]
+enum Pinned {
+    Size,
+    Align,
+}
+
+impl Pinned {
+    fn key(self) -> &'static str {
+        match self {
+            Pinned::Size => "size",
+            Pinned::Align => "align",
+        }
+    }
+
+    fn intrinsic(self) -> &'static str {
+        match self {
+            Pinned::Size => "size_of",
+            Pinned::Align => "align_of",
+        }
+    }
+}
+
+/// The check behind `#[pod(size = N)]` or `#[pod(align = N)]`, emitted into `__LAYOUT_OK` after the
+/// padding proof.
+///
+/// The padding proof shows a layout has no gaps; it cannot show the layout is the one bytes were
+/// written against. A field added, removed or widened still proves padding-free, and every
+/// checksum, save file and wire message built on the old layout silently changes meaning. A pin
+/// states the size or alignment outright, so that change fails the build and names itself.
+///
+/// The two shapes differ because only a concrete type can say what it found.
+///
+/// * **Concrete**: `let _: [(); N] = [(); size_of::<Name>()];`. Array lengths are compared at type
+///   check, so a mismatch is a type error that `cargo check` reports, and rustc renders both
+///   lengths: "expected an array with a size of 96, found one with a size of 104". That second
+///   number is the one a reader needs, and a const `assert!` has no way to print it, since const
+///   panics cannot format an integer. The generated tokens are respanned onto the pinned
+///   expression, so the error points into the user's `#[pod(...)]`. The type is named rather than
+///   written `Self`, because an array length may not mention `Self` inside an impl.
+/// * **Generic**: an `assert!` in the associated const, checked per instantiation like the padding
+///   proof, and for the same reason: an array length may not depend on a generic parameter. rustc
+///   names the failing instantiation (`<Ring<3> as Pod>::__LAYOUT_OK`), so the message only has to
+///   say what was pinned.
+///
+/// The expression is re-emitted verbatim, so it may use the type's own parameters
+/// (`size = 4 * N + 4`); a generic pin is then an identity over every instantiation, not one
+/// number.
+fn pin_check(input: &parse::Input, what: Pinned, pin: &parse::Pin) -> TokenStream {
+    let name = &input.name;
+    let key = what.key();
+    let intrinsic = what.intrinsic();
+    if input.is_concrete {
+        // Built group by group rather than lexed whole, so the user's expression and type name
+        // keep their own spans while everything this crate adds moves onto the pinned value.
+        let bracketed = |inner: TokenStream| {
+            let mut g = Group::new(Delimiter::Bracket, inner);
+            g.set_span(pin.span);
+            TokenStream::from(TokenTree::Group(g))
+        };
+        let mut expected = respan(lex("();"), pin.span);
+        expected.extend(pin.expr.clone());
+        let mut found = respan(lex("(); ::core::mem::"), pin.span);
+        found.extend(respan(lex(intrinsic), pin.span));
+        found.extend(respan(lex("::<"), pin.span));
+        found.extend(TokenStream::from(TokenTree::Ident(name.clone())));
+        found.extend(respan(lex(">()"), pin.span));
+
+        // The allow is for a pin the user had to parenthesise (`size = (1 << 4)`, see
+        // `parse::parse_pin`), which in array-length position rustc then calls unnecessary.
+        let mut ts = lex("#[allow(unused_parens)]");
+        ts.extend(respan(lex("let _:"), pin.span));
+        ts.extend(bracketed(expected));
+        ts.extend(respan(lex("="), pin.span));
+        ts.extend(bracketed(found));
+        ts.extend(respan(lex(";"), pin.span));
+        return ts;
+    }
+
+    let expr = pin.expr.to_string();
+    let why = match what {
+        Pinned::Size => {
+            "A size pin fails when a field is added, removed or resized, which changes what every \
+             byte written against the old layout means. If the change is intended, update the pin."
+        }
+        Pinned::Align => {
+            "An alignment pin fails when a field's alignment or the `repr(align)` changes, or on a \
+             target where a field is less aligned: a `u64` is 8-aligned on 64-bit targets but \
+             4-aligned on 32-bit x86. To hold the alignment on every target, raise it with \
+             `#[repr(C, align(N))]`."
+        }
+    };
+    // As with the padding message: an argument to `"{}"`, never the format string, because the
+    // pinned expression can contain braces.
+    let msg = format!(
+        "`{name}` does not have the {what_word} its `#[pod({key} = {expr})]` pins: \
+         `{intrinsic}::<{name}>()` differs from `{expr}`. {why}",
+        what_word = match what {
+            Pinned::Size => "size",
+            Pinned::Align => "alignment",
+        },
+    );
+    // Bound to a typed `let` first, so an expression of the wrong type is reported as "expected
+    // `usize`" at the expression, and so the comparison needs no parentheses around user tokens.
+    let mut ts = lex("#[allow(unused_parens)] let __pod_pinned: usize =");
+    ts.extend(pin.expr.clone());
+    ts.extend(lex(";"));
+    let mut args = lex("::core::mem::");
+    args.extend(lex(intrinsic));
+    args.extend(lex("::<Self>() == __pod_pinned, \"{}\","));
+    args.extend(TokenStream::from(TokenTree::Literal(Literal::string(&msg))));
+    ts.extend(lex("::core::assert!"));
+    ts.extend(delimit(Delimiter::Parenthesis, args));
+    ts.extend(lex(";"));
+    ts
 }

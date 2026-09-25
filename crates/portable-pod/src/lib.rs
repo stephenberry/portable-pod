@@ -103,6 +103,60 @@
 //! The value is a path, not a string. Only the `Pod` trait has to be reachable there; it is the
 //! only item the expansion names.
 //!
+//! # Pinning the layout
+//!
+//! The derive proves a layout has no padding. It cannot know whether it is the layout you meant:
+//! add a field, widen one, or drop an `align(16)`, and the type is still padding-free, while every
+//! checksum, save file and wire message written against the old layout has silently changed
+//! meaning. Where that matters, state the layout outright:
+//!
+//! ```
+//! # use portable_pod::Pod;
+//! #[derive(Clone, Copy, Pod)]
+//! #[repr(C)]
+//! #[pod(size = 16, align = 8)]
+//! struct Record {
+//!     id: u64,
+//!     kind: u32,
+//!     flags: u32,
+//! }
+//! ```
+//!
+//! A pin that holds costs nothing at run time. One that does not is a compile error at the pinned
+//! value, naming what the type actually is:
+//!
+//! ```text
+//! error[E0308]: mismatched types
+//!  --> src/wire.rs:3:14
+//!   |
+//! 3 | #[pod(size = 12)]
+//!   |              ^^ expected an array with a size of 12, found one with a size of 16
+//! ```
+//!
+//! Each value is a `usize` constant expression, so it can name constants. On a generic type it can
+//! name the type's own parameters, and the pin becomes an identity checked per instantiation, like
+//! the padding proof ([When the check fires](#when-the-check-fires)):
+//!
+//! ```
+//! # use portable_pod::Pod;
+//! #[derive(Clone, Copy, Pod)]
+//! #[repr(C)]
+//! #[pod(size = 4 * N + 4)]
+//! struct Ring<const N: usize> {
+//!     slots: [u32; N],
+//!     len: u32,
+//! }
+//! ```
+//!
+//! A `<` inside a value would be read as generic arguments, so parenthesise a shift:
+//! `size = (1 << 4)`.
+//!
+//! **Alignment is the one layout property that can differ between targets.** A padding-free type
+//! has the same size everywhere, but a `u64` is 8-aligned on 64-bit targets and 4-aligned on
+//! 32-bit x86, so `align = 8` on a struct of `u64`s holds on one and fails on the other. That
+//! failure is the pin doing its job. If the alignment has to hold everywhere, fix it with
+//! `#[repr(C, align(8))]`, which the pin then confirms.
+//!
 //! # What "portable" does and does not mean
 //!
 //! The guarantee is about **layout**: size, field offsets, the absence of padding, and the
@@ -226,8 +280,12 @@ pub use boxed::{boxed_zeroed, boxed_zeroed_with};
 ///
 /// There is no opt-out for padding; see the macro's own documentation for why.
 ///
-/// Accepts one attribute, `#[pod(crate = <path>)]`, naming the path that exports [`Pod`] when it
-/// is reached through a re-export rather than as `::portable_pod`.
+/// Accepts one attribute, `#[pod(...)]`, with three optional arguments:
+///
+/// * `crate = <path>` names the path that exports [`Pod`] when it is reached through a re-export
+///   rather than as `::portable_pod`.
+/// * `size = <expr>` and `align = <expr>` pin the type's size and alignment in bytes, so a layout
+///   change fails the build. See [Pinning the layout](crate#pinning-the-layout).
 #[cfg(feature = "derive")]
 pub use portable_pod_derive::Pod;
 

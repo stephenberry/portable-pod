@@ -449,3 +449,110 @@ mod macro_declared {
         assert_eq!(bytes_of(&PrivateTuple(7)).len(), 8);
     }
 }
+
+/// `#[pod(size = ...)]` and `#[pod(align = ...)]`. A pin that holds compiles to nothing, so for
+/// these types compiling *is* the assertion; the tests below only confirm the pinned values are
+/// the real ones. Mismatches, and the diagnostics they produce, are in `tests/ui/*_pin_*.rs`.
+mod layout_pins {
+    use super::*;
+
+    /// `align(8)` is spelled out because a `u64` is only 4-aligned on 32-bit x86, where a bare
+    /// `align = 8` pin would (correctly) fail.
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C, align(8))]
+    #[pod(size = 16, align = 8)]
+    struct Record {
+        id: u64,
+        kind: u32,
+        flags: u32,
+    }
+
+    /// A pin names constants and composes with `crate`, in either order and across attributes.
+    const WORDS: usize = 3;
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C, align(16))]
+    #[pod(align = 16, crate = crate::reexport)]
+    #[pod(size = WORDS * 8 + 8)]
+    struct Block {
+        words: [u64; WORDS],
+        tail: u64,
+    }
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(transparent)]
+    #[pod(size = core::mem::size_of::<u32>(), align = 4)]
+    struct Handle(u32);
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    #[pod(size = 0, align = 1)]
+    struct Marker;
+
+    /// A shift is fine once parenthesised; bare, it is refused (`tests/ui/pod_size_bare_shift.rs`).
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    #[pod(size = (1 << 4), align = 4)]
+    struct Shifted {
+        lanes: [u32; 4],
+    }
+
+    /// On a generic type the pin is an identity over the parameters, checked per instantiation.
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    #[pod(size = 4 * N + 4, align = 4)]
+    struct Ring<const N: usize> {
+        slots: [u32; N],
+        len: u32,
+    }
+
+    /// A type parameter in the pin, through a turbofish whose comma must not split the argument.
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    #[pod(size = core::mem::size_of::<[T; N]>() + 8)]
+    struct Table<T, const N: usize> {
+        items: [T; N],
+        len: u32,
+        _pad: u32,
+    }
+
+    /// The same on a generic type, where the pin becomes an assertion rather than a type.
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    #[pod(size = (N << 3))]
+    struct ShiftedRing<const N: usize> {
+        slots: [u64; N],
+    }
+
+    macro_rules! pinned {
+        ($name:ident, $size:expr) => {
+            #[derive(Clone, Copy, Pod)]
+            #[repr(C)]
+            #[pod(size = $size)]
+            struct $name {
+                a: u64,
+            }
+        };
+    }
+    pinned!(FromMacro, 8);
+
+    #[test]
+    fn the_pinned_layouts_are_the_real_ones() {
+        assert_eq!(bytes_of(&zeroed::<Record>()).len(), 16);
+        assert_eq!(core::mem::align_of::<Record>(), 8);
+        assert_eq!(bytes_of(&zeroed::<Block>()).len(), 32);
+        assert_eq!(bytes_of(&Handle(7)).len(), 4);
+        assert_eq!(bytes_of(&Marker).len(), 0);
+        assert_eq!(bytes_of(&zeroed::<Shifted>()).len(), 16);
+        assert_eq!(bytes_of(&FromMacro { a: 1 }).len(), 8);
+    }
+
+    #[test]
+    fn a_generic_pin_holds_for_every_instantiation_that_is_proved() {
+        assert_eq!(bytes_of(&zeroed::<Ring<1>>()).len(), 8);
+        assert_eq!(bytes_of(&zeroed::<Ring<7>>()).len(), 32);
+        assert_eq!(bytes_of(&zeroed::<Table<u64, 3>>()).len(), 32);
+        assert_eq!(bytes_of(&zeroed::<Table<u16, 4>>()).len(), 16);
+        assert_eq!(bytes_of(&zeroed::<ShiftedRing<2>>()).len(), 16);
+    }
+}
