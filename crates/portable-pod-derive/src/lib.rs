@@ -52,6 +52,25 @@ fn respan(ts: TokenStream, span: Span) -> TokenStream {
         .collect()
 }
 
+/// Move every token of a user's fragment to `span`'s location, keeping the hygiene context each
+/// token arrived with, so the fragment still resolves where it was written. `respan`, by contrast,
+/// replaces the whole span, and is only for this crate's own tokens.
+fn relocate(ts: TokenStream, span: Span) -> TokenStream {
+    ts.into_iter()
+        .map(|t| match t {
+            TokenTree::Group(g) => {
+                let mut regrouped = Group::new(g.delimiter(), relocate(g.stream(), span));
+                regrouped.set_span(g.span().located_at(span));
+                TokenTree::Group(regrouped)
+            }
+            mut leaf => {
+                leaf.set_span(leaf.span().located_at(span));
+                leaf
+            }
+        })
+        .collect()
+}
+
 /// The span of a field type's first token: where a diagnostic about that field belongs.
 fn field_span(ty: &TokenStream) -> Span {
     ty.clone()
@@ -83,15 +102,18 @@ fn rooted(prefix: &str, crate_path: &TokenStream, suffix: &str) -> TokenStream {
 /// `rooted`, moved onto `span`: the reference to the trait that a diagnostic about one field
 /// should point at.
 ///
-/// Only this crate's own tokens move. A path the user gave in `#[pod(crate = ...)]` keeps the
-/// spans it arrived with, because a span is not only a location: `$crate` resolves through it.
-/// Moving `$crate` onto a field that another crate's macro wrote makes it name *that* crate, so
-/// the bound checks whatever `Pod` that crate happens to export, or fails to resolve
-/// (`tests/ui/cross_crate_non_pod_field.rs` pins it; every release through 0.1.4 moved the path).
-/// The default `::portable_pod` is this crate's own token, so it moves, and that is what puts an
-/// unsatisfied bound at the field (`tests/ui/field_usize.stderr`). A user path left in place makes
-/// rustc draw the span from the path to the field instead
-/// (`tests/ui/pod_crate_field_not_pod.stderr`), which is the price of `crate = ...` being correct.
+/// A span is two things, a location and a hygiene context, and `$crate` resolves through the
+/// second. So this crate's own tokens are moved outright (`respan`), but a path the user gave in
+/// `#[pod(crate = ...)]` only has its *location* moved (`relocate`), keeping the context it was
+/// written in. Moving `$crate` outright onto a field that another crate's macro wrote made it name
+/// *that* crate, so the bound checked whatever `Pod` that crate happens to export, or failed to
+/// resolve; every release through 0.1.4 did that, and `tests/ui/cross_crate_non_pod_field.rs` pins
+/// the fix. Either way an unsatisfied bound is reported at the field (`tests/ui/field_usize.stderr`,
+/// `tests/ui/pod_crate_field_not_pod.stderr`).
+///
+/// The default `::portable_pod` is moved outright rather than relocated: it is this crate's own
+/// token, and relocating it, keeping the derive's call-site context, worsened about a dozen of the
+/// field diagnostics the compile-fail suite pins.
 fn rooted_at(
     prefix: &str,
     crate_path: Option<&TokenStream>,
@@ -102,7 +124,7 @@ fn rooted_at(
         None => respan(rooted(prefix, &lex("::portable_pod"), suffix), span),
         Some(path) => {
             let mut ts = respan(lex(prefix), span);
-            ts.extend(path.clone());
+            ts.extend(relocate(path.clone(), span));
             ts.extend(respan(lex(suffix), span));
             ts
         }

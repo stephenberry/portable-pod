@@ -1,8 +1,8 @@
 error[E0277]: `Header` is not `Pod`, so its bytes are not portable across machines
-  --> tests/ui/cross_crate_non_pod_field.rs:13:9
+  --> tests/ui/cross_crate_non_pod_field.rs:13:54
    |
 13 |         cross_crate_fixture::record!(Out { pub body: $crate::Header, });
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |                                                      ^^^^^^ unsatisfied trait bound
 ...
 16 | mine!();
    | ------- in this macro invocation
@@ -26,7 +26,7 @@ help: the trait `Pod` is not implemented for `Header`
              i32
              i64
            and $N others
-   = note: this error originates in the macro `cross_crate_fixture::record` which comes from the expansion of the macro `mine` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: this error originates in the macro `mine` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: `Header` is not `Pod`, so its bytes are not portable across machines
   --> tests/ui/cross_crate_non_pod_field.rs:13:38
@@ -60,7 +60,9 @@ note: required for `Out` to implement `Pod`
   --> tests/ui/cross_crate_non_pod_field.rs:13:9
    |
 13 |         cross_crate_fixture::record!(Out { pub body: $crate::Header, });
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound introduced here
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^------^^^^^^^^^^^^
+   |                                                      |
+   |                                                      unsatisfied trait bound introduced here
 ...
 16 | mine!();
    | ------- in this macro invocation
@@ -95,7 +97,9 @@ note: required for `Out` to implement `Pod`
   --> tests/ui/cross_crate_non_pod_field.rs:13:9
    |
 13 |         cross_crate_fixture::record!(Out { pub body: $crate::Header, });
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound introduced here
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^------^^^^^^^^^^^^
+   |                                                      |
+   |                                                      unsatisfied trait bound introduced here
 ...
 16 | mine!();
    | ------- in this macro invocation

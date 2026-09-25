@@ -1,7 +1,6 @@
-//! With `#[pod(crate = ...)]`, a field that is not `Pod` is reported on a span running from the
-//! path to the field, rather than on the field alone. The path keeps its own spans because
-//! `$crate` resolves through them (see `rooted_at` in the derive, and
-//! `cross_crate_non_pod_field.rs`).
+//! With `#[pod(crate = ...)]`, a field that is not `Pod` is still reported at the field. The path's
+//! tokens are relocated there with `Span::located_at`, which keeps the hygiene `$crate` resolves
+//! through (see `rooted_at` in the derive, and `cross_crate_non_pod_field.rs`).
 mod reexport {
     pub use portable_pod::Pod;
 }

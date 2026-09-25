@@ -284,8 +284,13 @@ extern crate self as portable_pod;
 // Compile the README's examples as doctests. Without this the README is prose that nobody
 // checks, and its code drifts from the crate silently -- which is how it came to contain a
 // rustdoc hidden-line marker (`# use ...`) that rendered literally on GitHub.
+//
+// The path comes from `readme` in the manifest, not a literal. The repository keeps one README at
+// its root (`readme = "../../README.md"`), and `cargo package` copies it to the package root and
+// rewrites the field to `README.md`; `CARGO_PKG_README` follows, so the same line finds the file in
+// a checkout and in the published crate, where a literal `../../../README.md` does not exist.
 #[cfg(doctest)]
-#[doc = include_str!("../../../README.md")]
+#[doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", env!("CARGO_PKG_README")))]
 struct ReadmeExamples;
 
 mod bit;
@@ -415,10 +420,11 @@ pub unsafe trait Pod: Copy + 'static {
     /// # A name clash to know about
     ///
     /// This item was added in 0.1.5. If a trait of your own also has an associated item named
-    /// `SHAPE`, then in generic code bounded by both, `T::SHAPE` is ambiguous (error E0034) where it
-    /// used to name yours. Qualify it, `<T as MyTrait>::SHAPE`, which also reads better. Adding a
-    /// defaulted trait item is a minor change under Rust's semver rules for exactly this reason:
-    /// the break is possible, needs a same-named item, and is fixed by one qualification.
+    /// `SHAPE`, then `T::SHAPE` is ambiguous (error E0034) where it used to name yours: in generic
+    /// code bounded by both traits, or on a type that implements both while both traits are in
+    /// scope (`Circle::SHAPE`). Write `<T as MyTrait>::SHAPE`. Adding a defaulted trait item is a
+    /// minor change under Rust's semver rules for exactly this reason: the break is possible, needs
+    /// a same-named item, and is fixed by one qualification.
     const SHAPE: Option<u64> = None;
 
     /// Where a derived shape fold starts, reached as `<() as Pod>::__SHAPE_FOLD`. Not part of the

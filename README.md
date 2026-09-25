@@ -170,7 +170,7 @@ The derive folds in each field's name and type in order, each const generic para
 
 The value is the same on every target and is a persistence format: the algorithm is documented exactly in the `shape` module and changes only in a semver-major release.
 
-One thing to know when upgrading: if a trait of yours also has an associated item named `SHAPE`, `T::SHAPE` in generic code bounded by both traits becomes ambiguous (error E0034). Write `<T as MyTrait>::SHAPE`.
+One thing to know when upgrading: if a trait of yours also has an associated item named `SHAPE`, `T::SHAPE` becomes ambiguous (error E0034) in generic code bounded by both traits, or on a type that implements both while both traits are in scope. Write `<T as MyTrait>::SHAPE`.
 
 ## Two things to know
 
