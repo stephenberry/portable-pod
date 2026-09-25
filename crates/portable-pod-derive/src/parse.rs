@@ -162,8 +162,32 @@ fn skip_attrs(toks: &[TokenTree], i: &mut usize) {
     }
 }
 
+/// Is `ts` a visibility: nothing, `pub`, or `pub(...)`? What a `$vis:vis` fragment can hold.
+fn is_visibility(ts: TokenStream) -> bool {
+    let toks: Vec<TokenTree> = ts.into_iter().collect();
+    match toks.as_slice() {
+        [] => true,
+        [TokenTree::Ident(kw)] => is(kw, "pub"),
+        [TokenTree::Ident(kw), TokenTree::Group(g)] => {
+            is(kw, "pub") && g.delimiter() == Delimiter::Parenthesis
+        }
+        _ => false,
+    }
+}
+
 /// Skip `pub`, `pub(crate)`, `pub(in path)`.
+///
+/// A `macro_rules!` `$vis:vis` fragment reaches a derive as an invisible (`Delimiter::None`) group
+/// around the visibility, and around nothing for a private item, so such a group is skipped whole:
+/// an item a macro declares with `$vis struct` derives as it would written out.
 fn skip_vis(toks: &[TokenTree], i: &mut usize) {
+    if let Some(TokenTree::Group(g)) = toks.get(*i)
+        && g.delimiter() == Delimiter::None
+        && is_visibility(g.stream())
+    {
+        *i += 1;
+        return;
+    }
     if let Some(TokenTree::Ident(id)) = toks.get(*i)
         && is(id, "pub")
     {
@@ -268,6 +292,18 @@ fn parse_pod_attr(
     Ok(())
 }
 
+/// The tokens inside an attribute's brackets. A `#[$m:meta]` written in a `macro_rules!` arrives with
+/// the fragment as an invisible group inside the brackets, which is opened.
+fn attr_tokens(brackets: &Group) -> Vec<TokenTree> {
+    let toks: Vec<TokenTree> = brackets.stream().into_iter().collect();
+    match toks.as_slice() {
+        [TokenTree::Group(g)] if g.delimiter() == Delimiter::None => {
+            g.stream().into_iter().collect()
+        }
+        _ => toks,
+    }
+}
+
 fn scan_attrs(toks: &[TokenTree], i: &mut usize) -> Result<Attrs, Error> {
     let mut repr = Repr {
         c_or_transparent: false,
@@ -288,7 +324,7 @@ fn scan_attrs(toks: &[TokenTree], i: &mut usize) -> Result<Attrs, Error> {
         if g.delimiter() != Delimiter::Bracket {
             break;
         }
-        let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+        let inner = attr_tokens(g);
         if let Some(TokenTree::Ident(head)) = inner.first() {
             if is(head, "repr") {
                 repr.span = Some(head.span());
