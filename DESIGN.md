@@ -223,6 +223,8 @@ So `SHAPE` adds about half again to the derive's use-site cost, linearly in fiel
 
 The per-field projections are respanned onto the first field of each type, where the field bound and the transitive proof already land, so a field type that is not `Pod` is still reported once. The compile-fail suite confirmed it: of 32 fixtures, the only goldens to change were the one that lists the `#[pod]` arguments and one that quotes the scalar impls' source.
 
+**Derive and runtime move together.** The derive now emits items the runtime must have (`SHAPE`, `__SHAPE_FOLD`), so the runtime depends on the derive with an exact `=` version, as `serde` does on `serde_derive`. A caret requirement would let a lockfile pair a runtime with any newer derive, and the first derive to emit an item its runtime lacks fails to compile there. The published 0.1.4 runtime cannot be amended: its caret requirement admits the next derive, so updating the derive alone (`cargo update -p portable-pod-derive`) over a 0.1.4 runtime fails to compile until the runtime is updated too.
+
 ## 13. Non-goals
 
 - Competing with `bytemuck`. If your bytes never leave the machine, use it.

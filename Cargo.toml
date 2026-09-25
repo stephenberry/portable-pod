@@ -12,4 +12,6 @@ authors = ["Stephen Berry"]
 
 [workspace.dependencies]
 portable-pod = { path = "crates/portable-pod", version = "0.1.4" }
-portable-pod-derive = { path = "crates/portable-pod-derive", version = "0.1.4" }
+# Exact: the derive's expansion names items of this version of the runtime (`Pod::SHAPE`,
+# `Pod::__SHAPE_FOLD`), so the two must not be paired across versions. See DESIGN.md §12.
+portable-pod-derive = { path = "crates/portable-pod-derive", version = "=0.1.4" }
