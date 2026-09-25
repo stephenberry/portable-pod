@@ -379,3 +379,73 @@ fn a_parameter_behind_a_projection_need_not_be_copy() {
     };
     assert_eq!(bytes_of(&f).len(), 8);
 }
+
+/// Items declared by a `macro_rules!` macro. Fragments a macro substitutes reach the derive
+/// wrapped in invisible (`Delimiter::None`) groups: a `$vis:vis` around the visibility (and around
+/// nothing for a private item), a `#[$m:meta]` around the attribute's contents, and a `$t:ty`
+/// around the type. `$vis struct` used to fail with "expected a struct definition", and a
+/// `#[$m:meta]` carrying the `repr` was not seen as one.
+mod macro_declared {
+    use super::*;
+
+    macro_rules! named {
+        ($(#[$m:meta])* $vis:vis struct $name:ident { $($fvis:vis $f:ident: $t:ty),* $(,)? }) => {
+            #[derive(Clone, Copy, PartialEq, Debug, Pod)]
+            $(#[$m])*
+            $vis struct $name { $($fvis $f: $t),* }
+        };
+    }
+
+    macro_rules! tuple {
+        ($(#[$m:meta])* $vis:vis struct $name:ident ($($fvis:vis $t:ty),* $(,)?);) => {
+            #[derive(Clone, Copy, PartialEq, Debug, Pod)]
+            $(#[$m])*
+            $vis struct $name ($($fvis $t),*);
+        };
+    }
+
+    named! {
+        #[repr(C)]
+        pub struct Public { pub a: u32, pub(crate) b: u32, c: u64 }
+    }
+    named! {
+        #[repr(C)]
+        pub(crate) struct Crate { pub(super) a: u64 }
+    }
+    named! {
+        #[repr(C, align(8))]
+        struct Private { a: u32, b: u32 }
+    }
+    named! {
+        #[repr(C)]
+        pub(in crate::macro_declared) struct InPath { pub(in crate::macro_declared) a: u16 }
+    }
+    named! {
+        #[repr(C)]
+        #[pod(crate = crate::reexport)]
+        pub struct ViaReexport { pub a: u32 }
+    }
+    tuple! {
+        #[repr(C)]
+        pub struct PublicTuple(pub u32, pub(crate) u32, u64);
+    }
+    tuple! {
+        #[repr(transparent)]
+        struct PrivateTuple(u64);
+    }
+
+    #[test]
+    fn all_of_these_compile_and_work() {
+        let p = Public { a: 1, b: 2, c: 3 };
+        assert_eq!(bytes_of(&p).len(), 16);
+        assert_eq!(read_pod::<Public>(bytes_of(&p)), Some(p));
+        assert_eq!(bytes_of(&Crate { a: 1 }).len(), 8);
+        assert_eq!(bytes_of(&Private { a: 1, b: 2 }).len(), 8);
+        assert_eq!(bytes_of(&InPath { a: 1 }).len(), 2);
+        assert_eq!(bytes_of(&ViaReexport { a: 1 }).len(), 4);
+        let t = PublicTuple(1, 2, 3);
+        assert_eq!(bytes_of(&t).len(), 16);
+        assert_eq!(read_pod::<PublicTuple>(bytes_of(&t)), Some(t));
+        assert_eq!(bytes_of(&PrivateTuple(7)).len(), 8);
+    }
+}
