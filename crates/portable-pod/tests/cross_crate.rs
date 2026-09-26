@@ -45,6 +45,17 @@ fn each_field_has_its_own_types_shape() {
     );
 }
 
+/// Exact values, pinned before derive 0.2.1 changed how a concrete type's impl is bounded: a struct
+/// another crate's macro declares, with `#[pod(crate = $crate)]`, keeps its shape.
+#[test]
+fn golden_shapes() {
+    assert_eq!(
+        cross_crate_fixture::Header::SHAPE,
+        Some(0xb932_e5ff_8eb5_0516)
+    );
+    assert_eq!(Out::SHAPE, Some(0xec9d_d5ce_0a95_4a39));
+}
+
 #[test]
 fn it_round_trips() {
     let out = Out {

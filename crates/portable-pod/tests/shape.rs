@@ -121,6 +121,153 @@ fn golden_none_field() {
     assert_eq!(HoldsOpaque::SHAPE, None);
 }
 
+/// Every form the derive accepted through derive 0.2.0, each with its exact shape.
+///
+/// Derive 0.2.1 changed how a concrete type's impl is bounded and added `#[pod(transparent)]`.
+/// These were pinned before either change, and neither may move one of them: a shape is persisted,
+/// so a derive release that changes one for a type it already accepted breaks every file written
+/// against it. Each form is here because some part of the expansion treats it differently.
+mod forms {
+    use portable_pod::Pod;
+
+    use super::Header;
+
+    /// `repr(transparent)` without `#[pod(transparent)]` is a struct with one field named `0`, and
+    /// stays one: its shape is not its field's.
+    #[derive(Clone, Copy, Pod)]
+    #[repr(transparent)]
+    pub struct Tick(pub u64);
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(transparent)]
+    pub struct Meters {
+        pub raw: u32,
+    }
+
+    /// A single-field `repr(C)` newtype.
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    pub struct Code(pub u32);
+
+    /// Over-aligned by `repr`, and pinned.
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C, align(8))]
+    #[pod(size = 16, align = 8)]
+    pub struct Record {
+        pub id: u64,
+        pub kind: u32,
+        pub flags: u32,
+    }
+
+    /// Rooted through a re-export, with a pin in the same attribute.
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    #[pod(crate = super::reexport, size = 8)]
+    pub struct Routed {
+        pub src: u32,
+        pub dst: u32,
+    }
+
+    /// A concrete type with a `where` clause of its own.
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    pub struct Bounded
+    where
+        u32: Copy,
+    {
+        pub a: u32,
+        pub b: [u8; 4],
+    }
+
+    /// Structs inside structs and arrays of them.
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    pub struct Stamp {
+        pub at: Tick,
+        pub code: Code,
+        pub rows: [Header; 2],
+        pub _pad: u32,
+    }
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    pub struct Ring<const N: usize> {
+        pub slots: [u32; N],
+        pub len: u32,
+    }
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    pub struct Keyword {
+        pub r#type: u32,
+    }
+
+    /// Declared through `macro_rules!` fragments, which reach the derive as invisible groups.
+    macro_rules! declare {
+        ($vis:vis struct $name:ident { $($fvis:vis $f:ident: $t:ty),* $(,)? }) => {
+            #[derive(Clone, Copy, Pod)]
+            #[repr(C)]
+            $vis struct $name { $($fvis $f: $t),* }
+        };
+    }
+    declare!(
+        pub struct Declared {
+            pub a: u64,
+            pub b: Tick,
+        }
+    );
+}
+
+#[test]
+fn golden_derive_forms() {
+    use forms::*;
+    use generics::{Params, Versioned, Wrap};
+    let pins: [(&str, Option<u64>, u64); 17] = [
+        ("Tick", Tick::SHAPE, 0x9a7f_7e0f_413c_0c29),
+        ("Meters", Meters::SHAPE, 0x3bb8_c86c_9f58_a574),
+        ("Code", Code::SHAPE, 0x52c5_14e1_fee2_c52d),
+        ("Record", Record::SHAPE, 0xeda7_505d_ded4_0fb1),
+        ("Routed", Routed::SHAPE, 0x87b4_82b1_c9db_1e72),
+        ("Bounded", Bounded::SHAPE, 0x760f_7b68_28c8_e985),
+        ("Stamp", Stamp::SHAPE, 0x626f_9e9a_71d9_bdfb),
+        ("Ring<3>", Ring::<3>::SHAPE, 0xcd18_7eee_417e_3397),
+        ("Keyword", Keyword::SHAPE, 0x5686_b1bf_c2c4_829a),
+        ("Declared", Declared::SHAPE, 0xdb56_4269_b4d0_923f),
+        ("Wrap<u32>", Wrap::<u32>::SHAPE, 0x4292_f48f_85e8_82e9),
+        ("Wrap<Header>", Wrap::<Header>::SHAPE, 0x0643_1112_e6d5_09bd),
+        (
+            "Params<true, 'a', -1, 0>",
+            Params::<true, 'a', -1, 0>::SHAPE,
+            0x3bea_32a4_8539_4e8c,
+        ),
+        ("Versioned<3>", Versioned::<3>::SHAPE, 0x994d_6aed_2884_20cf),
+        (
+            "shadowed_names::Concrete",
+            shadowed_names::Concrete::SHAPE,
+            0xca00_25ac_603e_e017,
+        ),
+        (
+            "shadowed_names::Generic<2>",
+            shadowed_names::Generic::<2>::SHAPE,
+            0xbf7b_f52a_0548_d2c5,
+        ),
+        ("[Stamp; 2]", <[Stamp; 2]>::SHAPE, 0xa58e_ea84_38a5_7c1c),
+    ];
+    let wrong: Vec<String> = pins
+        .iter()
+        .filter(|(_, actual, golden)| *actual != Some(*golden))
+        .map(|(name, actual, golden)| {
+            let actual = actual.map_or_else(|| String::from("None"), |v| format!("{v:#018x}"));
+            format!("{name}: {actual}, golden {golden:#018x}")
+        })
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "shapes differ from their goldens; see the top of this file:\n{}",
+        wrong.join("\n")
+    );
+}
+
 #[track_caller]
 fn assert_shape(actual: Option<u64>, golden: u64) {
     let actual = actual.expect("a shape, not `None`");
