@@ -165,6 +165,23 @@ fn slices_and_boxes() {
 const _: () = portable_pod::assert_layout::<Ring<3>>();
 const _: () = portable_pod::assert_layout::<Ring<0>>();
 
+// `zeroed` is a `const fn` too, so a `const` item or a `const fn` constructor starts from it, with
+// the layout proof forced there. `tests/ui/zeroed_const_item.rs` is the failing direction.
+const EMPTY_RING: Ring<3> = portable_pod::zeroed();
+
+const fn empty_ring() -> Ring<3> {
+    portable_pod::zeroed()
+}
+
+#[test]
+fn zeroed_in_a_const_is_the_zeroed_value() {
+    const FROM_FN: Ring<3> = empty_ring();
+    let runtime: Ring<3> = portable_pod::zeroed();
+    assert!(bytes_of(&EMPTY_RING).iter().all(|&b| b == 0));
+    assert_eq!(bytes_of(&EMPTY_RING), bytes_of(&runtime));
+    assert_eq!(bytes_of(&FROM_FN), bytes_of(&runtime));
+}
+
 /// The layout proof for a generic type is an associated const, which rustc evaluates once per
 /// monomorphization. That is what makes every instantiation checked without any of them being
 /// named in a test — but it also means the failure is a *post-monomorphization* error, invisible

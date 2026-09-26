@@ -5,9 +5,23 @@ use crate::Pod;
 /// Sound because [`Pod`] clause 2 makes the all-zero bit pattern a valid value for every `Pod`
 /// type. This is the way to build a large fixed-size struct without a field-by-field initializer
 /// and without leaving padding uninitialized.
+///
+/// It is a `const fn`, so a `const` or `static` of a `Pod` type, or a `const fn` constructor of a
+/// type holding one, can start from it rather than restating `core::mem::zeroed` in an `unsafe`
+/// block of its own. The layout proof runs there too, so a padded type fails the build at the item:
+///
+/// ```
+/// # use portable_pod::{Pod, zeroed};
+/// #[derive(Clone, Copy, Pod)]
+/// #[repr(C)]
+/// struct Table { keys: [u64; 8], len: u64 }
+///
+/// const EMPTY: Table = zeroed();
+/// assert_eq!(EMPTY.len, 0);
+/// ```
 #[inline]
 #[must_use]
-pub fn zeroed<T: Pod>() -> T {
+pub const fn zeroed<T: Pod>() -> T {
     crate::prove_layout::<T>();
     // SAFETY: `T: Pod` guarantees the all-zero bit pattern is a valid `T` (clause 2).
     unsafe { core::mem::zeroed() }
