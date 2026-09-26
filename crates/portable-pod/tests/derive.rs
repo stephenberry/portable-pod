@@ -159,6 +159,12 @@ fn slices_and_boxes() {
     assert_eq!(bytes_of_slice(&hs).len(), 24);
 }
 
+// `assert_layout` is a `const fn`, so an instantiation nothing else reaches is proved by a `const`
+// item: a build error, under `cargo check` as well, with no test to run.
+// `tests/ui/assert_layout_const_item.rs` is the failing direction.
+const _: () = portable_pod::assert_layout::<Ring<3>>();
+const _: () = portable_pod::assert_layout::<Ring<0>>();
+
 /// The layout proof for a generic type is an associated const, which rustc evaluates once per
 /// monomorphization. That is what makes every instantiation checked without any of them being
 /// named in a test — but it also means the failure is a *post-monomorphization* error, invisible

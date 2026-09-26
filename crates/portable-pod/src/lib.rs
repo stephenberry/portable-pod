@@ -228,16 +228,18 @@
 //! Note the precise scope: an instantiation is checked when it **reaches this crate** — when it
 //! is passed to [`bytes_of`], [`zeroed`], [`read_pod`], or another entry point, or when it is a
 //! field of a type that is. A generic type that is constructed, copied, and read without ever
-//! touching this crate's API is never checked. Call [`assert_layout`] to check one deliberately:
+//! touching this crate's API is never checked. Call [`assert_layout`] to check one deliberately.
+//! It is a `const fn`, so a `const` item beside the type makes the check a build error that
+//! `cargo check` reports too:
 //!
 //! ```
 //! # use portable_pod::{Pod, assert_layout};
 //! # #[derive(Clone, Copy, Pod)]
 //! # #[repr(C)]
 //! # struct Ring<const N: usize> { slots: [u32; N], len: u32 }
-//! // in a test, name the instantiations your program relies on
-//! assert_layout::<Ring<3>>();
-//! assert_layout::<Ring<7>>();
+//! // name the instantiations your program relies on
+//! const _: () = assert_layout::<Ring<3>>();
+//! const _: () = assert_layout::<Ring<7>>();
 //! ```
 //!
 //! Within that scope you still get something a hand-written test cannot offer: every
@@ -444,7 +446,7 @@ pub unsafe trait Pod: Copy + 'static {
 /// definition; for a generic one this is what triggers it, which is why using a value is what
 /// surfaces a padded instantiation. See the crate docs, "When the check fires".
 #[inline(always)]
-fn prove_layout<T: Pod>() {
+const fn prove_layout<T: Pod>() {
     // Not a no-op: naming the associated const is precisely what forces const evaluation, and
     // dropping this line would silently disable the layout check for every generic type.
     #[allow(clippy::let_unit_value)]
@@ -456,20 +458,23 @@ fn prove_layout<T: Pod>() {
 /// Only needed for **generic** types, and only when an instantiation might never reach another
 /// entry point. A concrete type is checked at its definition, and a generic one is checked when
 /// it is passed to [`bytes_of`] and friends — but a `Ring<3>` that your program only ever
-/// constructs and reads directly is checked by nothing. Naming it here closes that gap:
+/// constructs and reads directly is checked by nothing. Naming it in a `const` item beside the
+/// type closes that gap:
 ///
 /// ```
 /// # use portable_pod::{Pod, assert_layout};
 /// # #[derive(Clone, Copy, Pod)]
 /// # #[repr(C)]
 /// # struct Ring<const N: usize> { slots: [u32; N], len: u32 }
-/// assert_layout::<Ring<3>>();
+/// const _: () = assert_layout::<Ring<3>>();
 /// ```
 ///
-/// This is a compile-time check that happens to be spelled as a function call; at run time it
-/// does nothing.
+/// A `const` item is evaluated wherever the item is compiled, so this is a build error under
+/// `cargo check` too, not only under `cargo build`, and it needs no test to run. Called from a
+/// function instead, it is checked when that function is monomorphized; at run time it does
+/// nothing either way.
 #[inline(always)]
-pub fn assert_layout<T: Pod>() {
+pub const fn assert_layout<T: Pod>() {
     prove_layout::<T>();
 }
 

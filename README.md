@@ -186,7 +186,7 @@ Every mainstream target is little-endian, and WebAssembly is little-endian by sp
 
 **`cargo check` does not catch padded generic types, and the check has a scope.** A generic type's proof is an associated const evaluated per monomorphization, so the failure is a post-monomorphization error: concrete types are caught by `cargo check`, generic ones need `cargo build` or `cargo test`.
 
-More important is *which* instantiations are checked: those that **reach this crate** — passed to `bytes_of`, `zeroed`, `read_pod`, or contained in a type that is. A `Ring<3>` your program only constructs and reads directly is checked by nothing. Call `assert_layout::<Ring<3>>()` in a test to check one deliberately.
+More important is *which* instantiations are checked: those that **reach this crate** — passed to `bytes_of`, `zeroed`, `read_pod`, or contained in a type that is. A `Ring<3>` your program only constructs and reads directly is checked by nothing. Name it with `assert_layout` to check it deliberately. It is a `const fn`, so a `const` item beside the type makes the check a build error that `cargo check` reports too, with no test to run:
 
 ```rust
 use portable_pod::{assert_layout, Pod};
@@ -195,8 +195,8 @@ use portable_pod::{assert_layout, Pod};
 #[repr(C)]
 struct Ring<const N: usize> { slots: [u32; N], len: u32 }
 
-assert_layout::<Ring<3>>();
-assert_layout::<Ring<7>>();
+const _: () = assert_layout::<Ring<3>>();
+const _: () = assert_layout::<Ring<7>>();
 ```
 
 ## `bool` is not `Pod`
@@ -231,7 +231,7 @@ CI asserts this in all three configurations, so it cannot quietly regress: `carg
 
 `portable-pod` and `portable-pod-derive` are released together and must be used together: each runtime release depends on exactly one derive version (`=`), because the derive's expansion names items of the runtime it ships with. Depend on `portable-pod` only and let it choose the derive; never add or update `portable-pod-derive` on its own.
 
-The two carry different version numbers. The derive that emits `Pod::SHAPE` is 0.2.0, paired with runtime 0.1.5, so that a project still on runtime 0.1.4, which accepts any `0.1.x` derive, cannot be moved onto it by `cargo update -p portable-pod-derive` or a bot and fail to compile.
+The two carry different version numbers. The derive that emits `Pod::SHAPE` is 0.2.0, first paired with runtime 0.1.5, so that a project still on runtime 0.1.4, which accepts any `0.1.x` derive, cannot be moved onto it by `cargo update -p portable-pod-derive` or a bot and fail to compile.
 
 ## License
 
