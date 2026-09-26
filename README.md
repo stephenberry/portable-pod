@@ -44,7 +44,7 @@ Don't hand-write `unsafe impl Pod`. The usual version of that is a human doing a
 unsafe impl Pod for Body {}
 ```
 
-The comment goes stale when someone adds a field. `#[derive(Pod)]` proves three of the four clauses mechanically, and the diagnostic points at the field at fault:
+The comment goes stale when someone adds a field. `#[derive(Pod)]` proves three of the four clauses mechanically, and the diagnostic points at the field at fault. For a type without generic parameters it is the only error, however many places use the type:
 
 ```text
 error[E0277]: `usize` is not `Pod`, so its bytes are not portable across machines

@@ -1,7 +1,7 @@
 error[E0277]: `usize` is not `Pod`, so its bytes are not portable across machines
-  --> tests/ui/pod_crate_field_not_pod.rs:13:13
+  --> tests/ui/concrete_field_not_pod_used.rs:14:13
    |
-13 |     offset: usize,
+14 |     offset: usize,
    |             ^^^^^ the trait `Pod` is not implemented for `usize`
    |
    = note: not valid for every bit pattern: `bool` (use `portable_pod::Bit`), `char`, `NonZero*`, enums, references

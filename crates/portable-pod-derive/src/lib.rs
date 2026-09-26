@@ -144,15 +144,17 @@ fn rooted_at(
 ///   The error lists the fields in declaration order and states the placement rule; it does
 ///   not name the individual gap, which is a deliberate compile-time trade (see DESIGN.md
 ///   §5.1 — per-field `offset_of!` checks cost ~85% of this derive's total time).
-/// * **Every field is `Pod`**, via a generated where-clause bound. This discharges the
-///   any-bit-pattern and position-independence clauses by induction, and is why a `bool`,
-///   `usize`, or `f32` field fails to compile.
+/// * **Every field is `Pod`**. This discharges the any-bit-pattern and position-independence
+///   clauses by induction, and is why a `bool`, `usize`, or `f32` field fails to compile. For a
+///   type with no generic parameters the impl is unconditional and the field is proved in its
+///   body, so a field that is not `Pod` is one error, at the field, however many places use the
+///   type. A generic type bounds each field type in the impl's where clause instead.
 ///
 /// For a generic type the layout proof is an associated const, so it is checked **per
 /// instantiation**: `Ring<3>` and `Ring<7>` are proved separately, and neither has to be named
-/// in a test. Each of its **type** parameters is additionally bound `Copy`, which is the
-/// `Pod: Copy` supertrait obligation and nothing more — the struct itself does not have to
-/// declare `Copy` on its parameters, and most do not, preferring to put bounds on their impls.
+/// in a test. The impl is additionally bound `Self: Copy`, which is the `Pod: Copy` supertrait
+/// obligation and nothing more — the struct itself does not have to declare `Copy` on its
+/// parameters, and most do not, preferring to put bounds on their impls.
 ///
 /// # What it emits besides the proof
 ///
@@ -226,9 +228,21 @@ fn expand(input: &parse::Input) -> TokenStream {
         .unwrap_or_else(|| lex("::portable_pod"));
     let user_root = input.crate_path.as_ref();
 
-    // Bound every field type. Field types, not generic parameters: an unsatisfied concrete bound
-    // (`where bool: Pod`) is a hard error, and the same clause covers generic field types, so the
-    // derive never has to reason about type parameters.
+    // Prove every field `Pod`, and how depends on whether the type is generic.
+    //
+    // A generic type bounds each field type in the impl's where clause. Field types, not generic
+    // parameters: the same clause covers `[T; N]` and `u32` alike, so the derive never has to
+    // reason about type parameters, and an instantiation whose field is not `Pod` simply has no
+    // impl (a use-site error, DESIGN.md §3).
+    //
+    // A concrete type gets no field bounds: its impl is unconditional, and each field is proved
+    // `Pod` by the body that names `<Field as Pod>` (below), which is type-checked at the
+    // definition whether or not anything uses the type. That is exactly as sound -- a field that
+    // is not `Pod` still fails the build -- and it fails it *once*. A bound `usize: Pod` in the
+    // where clause of a concrete impl was an error at the definition too, but it also left the
+    // impl unusable, so every use of the type (`bytes_of`, `read_pod`, a containing struct, an
+    // array of it) failed its `Pod` bound again, each with its own error: tens of errors for one
+    // wrong field. `tests/ui/concrete_field_not_pod_used.rs` pins the single one.
     //
     // One bound and one inherited proof per *field*, never merged across fields whose types are
     // spelled alike. Two spellings that print the same can name different types: `$crate::Header`
@@ -247,8 +261,10 @@ fn expand(input: &parse::Input) -> TokenStream {
         // not at the `Pod` in the derive attribute several lines above it. The type's own tokens
         // are extended in verbatim and keep the spans they came with.
         let at = field_span(&f.ty);
-        bounds.extend(f.ty.clone());
-        bounds.extend(rooted_at(":", user_root, "::Pod,", at));
+        if !input.is_concrete {
+            bounds.extend(f.ty.clone());
+            bounds.extend(rooted_at(":", user_root, "::Pod,", at));
+        }
         // Force each field's own layout proof, making the proof transitive.
         //
         // This line is load-bearing and its absence was unsound. A field type's proof is only
@@ -380,13 +396,40 @@ fn expand(input: &parse::Input) -> TokenStream {
         checks.extend(pin_check(input, Pinned::Align, pin));
     }
 
-    // `const __LAYOUT_OK: () = { <inherit> <checks> };`
-    let mut proof = inherit;
+    // Where the per-field proofs go: into `__LAYOUT_OK` for a generic type, and into `SHAPE` for a
+    // concrete one, which `__LAYOUT_OK` then forces.
+    //
+    // A concrete type has no field bounds, so every body that names `<Field as Pod>` reports a
+    // field that is not `Pod`, and `SHAPE` has to name each field's shape. rustc reports one
+    // failed obligation once per body, not once per program: with the inherited proofs in
+    // `__LAYOUT_OK`, the field was reported twice, identically. With them in `SHAPE`, beside the
+    // shape projections, both mentions land on the field's span in one body and are reported once.
+    // Forcing `SHAPE` from `__LAYOUT_OK` keeps `__LAYOUT_OK` the whole transitive proof it is for
+    // every other type. The shape is then evaluated at every concrete definition, which DESIGN.md
+    // §12 measured as free, and the padding diagnostics are unchanged: the forcing is spanned at
+    // the derive, where their trail already points.
+    //
+    // A generic type keeps `SHAPE` free of proofs. Its field bounds make every body well-formed,
+    // and a shape read of an instantiation must not become a layout check (§12).
+    //
+    // `const __LAYOUT_OK: () = { <inherit, or the forced SHAPE> <checks> };`
+    let (mut proof, shape_proof) = if input.is_concrete {
+        (
+            rooted(
+                "let _: ::core::option::Option<::core::primitive::u64> = <Self as",
+                root,
+                "::Pod>::SHAPE;",
+            ),
+            inherit,
+        )
+    } else {
+        (inherit, TokenStream::new())
+    };
     proof.extend(checks);
     let mut body = lex("#[allow(clippy::let_unit_value)] const __LAYOUT_OK: () =");
     body.extend(delimit(Delimiter::Brace, proof));
     body.extend(lex(";"));
-    body.extend(shape(input, root));
+    body.extend(shape(input, root, shape_proof));
 
     let mut out = lex("#[automatically_derived] unsafe impl");
     if !decl.is_empty() {
@@ -442,30 +485,56 @@ fn expand(input: &parse::Input) -> TokenStream {
 ///   method call per field cost measurably more than one `.fields(&[..])` call (DESIGN.md §12).
 ///   Each field has its own projection, never one shared by fields spelled alike: see the bounds
 ///   in `expand` for why that sharing was unsound.
-/// * **No assertion, and no forced layout proof.** A const panic site costs compile time at every
-///   derive (§5.1). Forcing `__LAYOUT_OK` here would be redundant, since a shape is only useful
-///   beside bytes an entry point produced and every entry point forces it, and it would add a
-///   second "erroneous constant" trail to every padding diagnostic.
+/// * **No assertion.** A const panic site costs compile time at every derive (§5.1). For a generic
+///   type there is no layout proof in it either: a shape read of an instantiation is not a layout
+///   check, and every entry point forces the proof anyway. For a concrete type, `proof` is the
+///   fields' inherited proofs, which `expand` puts here so that each field is named `Pod` in one
+///   body only; see there.
 ///
 /// Each projection is respanned onto its field, where the field bound and the transitive proof in
-/// `expand` also land, so rustc reports a field type that is not `Pod` once per field.
-fn shape(input: &parse::Input, root: &TokenStream) -> TokenStream {
+/// `expand` also land, so rustc reports a field type that is not `Pod` at the field.
+fn shape(input: &parse::Input, root: &TokenStream, proof: TokenStream) -> TokenStream {
+    let value = fold(input, root);
+
+    // `unused_parens` is for a `shape_with` the user had to parenthesise (`(1 << 4)`), as for the
+    // pins.
+    let mut ts = lex("#[allow(unused_parens, clippy::let_unit_value)] \
+         const SHAPE: ::core::option::Option<::core::primitive::u64> =");
+    if proof.is_empty() {
+        ts.extend(value);
+    } else {
+        let mut block = proof;
+        block.extend(value);
+        ts.extend(delimit(Delimiter::Brace, block));
+    }
+    ts.extend(lex(";"));
+    ts
+}
+
+/// `<Field as Pod>::SHAPE`, respanned onto the field.
+fn field_shape(input: &parse::Input, f: &parse::Field) -> TokenStream {
+    let at = field_span(&f.ty);
+    let mut ts = respan(lex("<"), at);
+    ts.extend(f.ty.clone());
+    ts.extend(rooted_at(
+        "as",
+        input.crate_path.as_ref(),
+        "::Pod>::SHAPE",
+        at,
+    ));
+    ts
+}
+
+/// The struct fold: every field, every const parameter, any `shape_with`, then the size.
+fn fold(input: &parse::Input, root: &TokenStream) -> TokenStream {
     // One `(name, <Field as Pod>::SHAPE)` pair per field, never shared between fields whose types
     // are spelled alike, for the reason given at the bounds in `expand`: a shared projection
     // would give `$crate::Header` from two crates the same shape.
     let mut fields = TokenStream::new();
     for f in &input.fields {
-        let at = field_span(&f.ty);
         let mut pair = TokenStream::from(TokenTree::Literal(Literal::string(&f.shape_name)));
         pair.extend(lex(","));
-        pair.extend(respan(lex("<"), at));
-        pair.extend(f.ty.clone());
-        pair.extend(rooted_at(
-            "as",
-            input.crate_path.as_ref(),
-            "::Pod>::SHAPE",
-            at,
-        ));
+        pair.extend(field_shape(input, f));
         fields.extend(delimit(Delimiter::Parenthesis, pair));
         fields.extend(lex(","));
     }
@@ -492,14 +561,7 @@ fn shape(input: &parse::Input, root: &TokenStream) -> TokenStream {
         fold.extend(delimit(Delimiter::Parenthesis, with.expr.clone()));
     }
     fold.extend(lex(".finish(::core::mem::size_of::<Self>())"));
-
-    // `unused_parens` is for a `shape_with` the user had to parenthesise (`(1 << 4)`), as for the
-    // pins.
-    let mut ts = lex("#[allow(unused_parens)] \
-         const SHAPE: ::core::option::Option<::core::primitive::u64> =");
-    ts.extend(fold);
-    ts.extend(lex(";"));
-    ts
+    fold
 }
 
 /// Which layout property a `#[pod(...)]` pin names.

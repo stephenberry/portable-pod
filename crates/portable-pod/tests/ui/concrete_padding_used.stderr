@@ -1,0 +1,33 @@
+error[E0080]: evaluation panicked: `Padded` has padding, so it cannot be `Pod`: `size_of::<Padded>()` exceeds the sum of its field sizes, and reading a padding byte observes uninitialized memory. Under `repr(C)` each field goes at the next offset that is a multiple of its alignment, and the size is rounded up to the struct's alignment, so a gap sits before any field more aligned than the offset it would otherwise take, and after the last field. Fields in declaration order: a: u8, b: u32. Reorder them widest-first, or insert explicit zeroed padding fields. Always-zero padding is not an escape: a typed copy leaves padding uninitialized however the value was built.
+ --> tests/ui/concrete_padding_used.rs:6:23
+  |
+6 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^ evaluation of `<Padded as portable_pod::Pod>::__LAYOUT_OK` failed here
+
+note: erroneous constant encountered
+ --> tests/ui/concrete_padding_used.rs:6:23
+  |
+6 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this note originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+ --> $DIR/src/lib.rs
+  |
+  |     const __LAYOUT_OK: () = <T as Pod>::__LAYOUT_OK;
+  |                             ^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+  --> tests/ui/concrete_padding_used.rs:16:11
+   |
+16 |     many: [Padded; 2],
+   |           ^^^^^^^^^^^
+
+note: erroneous constant encountered
+  --> tests/ui/concrete_padding_used.rs:13:23
+   |
+13 | #[derive(Clone, Copy, Pod)]
+   |                       ^^^
+   |
+   = note: this note originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)
