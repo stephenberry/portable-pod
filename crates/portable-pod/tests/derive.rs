@@ -579,3 +579,84 @@ mod layout_pins {
         assert_eq!(bytes_of(&zeroed::<ShiftedRing<2>>()).len(), 16);
     }
 }
+
+/// `#[pod(transparent)]`: a one-field newtype whose shape is its field's. The layout proof is the
+/// same as without it, so these are behavioural checks; the shapes are in `tests/shape.rs`, and
+/// the misuses that must fail in `tests/ui/transparent_*.rs`.
+mod transparent {
+    use super::*;
+
+    #[derive(Clone, Copy, PartialEq, Debug, Pod)]
+    #[repr(transparent)]
+    #[pod(transparent)]
+    struct Tick(u64);
+
+    /// A named field, and `repr(C)` rather than `repr(transparent)`: one field, so the same layout.
+    #[derive(Clone, Copy, PartialEq, Debug, Pod)]
+    #[repr(C)]
+    #[pod(transparent)]
+    struct Meters {
+        raw: u32,
+    }
+
+    /// Over a struct, with a pin and a re-exported path in the same attribute.
+    #[derive(Clone, Copy, PartialEq, Debug, Pod)]
+    #[repr(transparent)]
+    #[pod(transparent, crate = crate::reexport, size = 8)]
+    struct Framed(Header);
+
+    /// Generic: the field is bounded, as for any generic type, and each instantiation proved.
+    #[derive(Clone, Copy, PartialEq, Debug, Pod)]
+    #[repr(transparent)]
+    #[pod(transparent)]
+    struct Wrapper<T>(T);
+
+    /// A const parameter the field's type mentions, so it reaches the shape through the field.
+    #[derive(Clone, Copy, PartialEq, Debug, Pod)]
+    #[repr(transparent)]
+    #[pod(transparent)]
+    struct Lanes<const N: usize>([u16; N]);
+
+    #[test]
+    fn a_transparent_newtype_is_its_field_in_bytes() {
+        let t = Tick(0x0102_0304_0506_0708);
+        assert_eq!(bytes_of(&t), bytes_of(&t.0));
+        assert_eq!(read_pod::<Tick>(bytes_of(&t)), Some(t));
+
+        let m = Meters { raw: 9 };
+        assert_eq!(bytes_of(&m), bytes_of(&9u32));
+
+        let f = Framed(Header {
+            magic: 1,
+            version: 2,
+        });
+        assert_eq!(read_pod::<Framed>(bytes_of(&f)), Some(f));
+
+        let w = Wrapper(Wrapper(Pair(3, 4)));
+        assert_eq!(bytes_of(&w), bytes_of(&Pair(3, 4)));
+        assert_eq!(read_pod::<Wrapper<Wrapper<Pair>>>(bytes_of(&w)), Some(w));
+
+        let l = Lanes([1u16, 2, 3]);
+        assert_eq!(bytes_of(&l).len(), 6);
+        assert_eq!(zeroed::<Lanes<5>>(), Lanes([0; 5]));
+    }
+
+    /// A contained padded instantiation is refused through a transparent newtype as through any
+    /// other: the inherited proof is the same (`tests/ui/transparent_padding.rs`).
+    #[test]
+    fn a_transparent_newtype_nests() {
+        #[derive(Clone, Copy, PartialEq, Debug, Pod)]
+        #[repr(C)]
+        struct Outer {
+            at: Tick,
+            span: Wrapper<Meters>,
+            _pad: u32,
+        }
+        let o = Outer {
+            at: Tick(5),
+            span: Wrapper(Meters { raw: 6 }),
+            _pad: 0,
+        };
+        assert_eq!(read_pod::<Outer>(bytes_of(&o)), Some(o));
+    }
+}

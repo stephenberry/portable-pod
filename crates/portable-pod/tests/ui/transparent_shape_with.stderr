@@ -1,0 +1,7 @@
+error: `shape_with` cannot extend a `#[pod(transparent)]` shape: `transparent` makes `KindCode`'s shape exactly its field's. Remove `transparent` to fold this value into a struct shape instead.
+ --> tests/ui/transparent_shape_with.rs:4:23
+  |
+4 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

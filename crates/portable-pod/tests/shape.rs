@@ -268,6 +268,84 @@ fn golden_derive_forms() {
     );
 }
 
+/// `#[pod(transparent)]`: the newtype's shape is its field's, exactly. DESIGN.md §13.
+mod transparent {
+    use portable_pod::Pod;
+
+    use super::{Header, Opaque};
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(transparent)]
+    #[pod(transparent)]
+    pub struct Tick(pub u64);
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    #[pod(transparent)]
+    pub struct Meters {
+        pub raw: u32,
+    }
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(transparent)]
+    #[pod(transparent, crate = super::reexport, size = 8)]
+    pub struct Framed(pub Header);
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(transparent)]
+    #[pod(transparent)]
+    pub struct Wrapper<T>(pub T);
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(transparent)]
+    #[pod(transparent)]
+    pub struct Lanes<const N: usize>(pub [u16; N]);
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(transparent)]
+    #[pod(transparent)]
+    pub struct Hidden(pub Opaque);
+
+    /// The same record, once with a `u64` field and once with the newtype in its place.
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    pub struct Raw {
+        pub at: u64,
+        pub len: u32,
+        pub _pad: u32,
+    }
+
+    #[derive(Clone, Copy, Pod)]
+    #[repr(C)]
+    pub struct Typed {
+        pub at: Tick,
+        pub len: Wrapper<u32>,
+        pub _pad: u32,
+    }
+}
+
+#[test]
+fn golden_transparent() {
+    // `u64`'s golden, from `golden_scalars`: the newtype adds nothing.
+    assert_shape(transparent::Tick::SHAPE, 0x116b_3822_8851_2a79);
+}
+
+#[test]
+fn a_transparent_shape_is_its_fields() {
+    use transparent::*;
+    assert_eq!(Tick::SHAPE, u64::SHAPE);
+    assert_eq!(Meters::SHAPE, u32::SHAPE);
+    assert_eq!(Framed::SHAPE, Header::SHAPE);
+    assert_eq!(Wrapper::<Wrapper<Header>>::SHAPE, Header::SHAPE);
+    assert_eq!(Lanes::<3>::SHAPE, <[u16; 3]>::SHAPE);
+    assert_ne!(Lanes::<3>::SHAPE, Lanes::<4>::SHAPE);
+    assert_eq!(Hidden::SHAPE, None, "`None` forwards like anything else");
+    // So a field retyped to a transparent newtype of its old type keeps the record's shape.
+    assert_eq!(Typed::SHAPE, Raw::SHAPE);
+    // Without the attribute, the same newtype is a one-field struct: opting in changes its shape.
+    assert_ne!(Tick::SHAPE, forms::Tick::SHAPE);
+}
+
 #[track_caller]
 fn assert_shape(actual: Option<u64>, golden: u64) {
     let actual = actual.expect("a shape, not `None`");

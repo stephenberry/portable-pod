@@ -1,0 +1,7 @@
+error: `#[pod(transparent)]` gives `Fixed` exactly its field's shape, and the field's type does not mention the const parameter `FRAC`, so every `FRAC` would share one shape. Remove `transparent` to fold `FRAC` into a struct shape.
+ --> tests/ui/transparent_unused_const_param.rs:5:23
+  |
+5 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

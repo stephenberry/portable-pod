@@ -1,0 +1,33 @@
+error[E0080]: evaluation panicked: `Widened` has padding, so it cannot be `Pod`: `size_of::<Widened>()` exceeds the size of its one field, `0: u32`, and reading a padding byte observes uninitialized memory. A one-field struct is larger than its field only when its `repr(align)` raises the alignment above the field's, which pads the tail. Remove the `align`, or drop `#[pod(transparent)]` and fill the gap with explicit zeroed padding fields.
+ --> tests/ui/transparent_padding.rs:6:23
+  |
+6 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^ evaluation of `<Widened as portable_pod::Pod>::__LAYOUT_OK` failed here
+
+note: erroneous constant encountered
+ --> tests/ui/transparent_padding.rs:6:23
+  |
+6 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this note originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0080]: evaluation panicked: `Inner` has padding, so it cannot be `Pod`: `size_of::<Inner>()` exceeds the sum of its field sizes, and reading a padding byte observes uninitialized memory. Under `repr(C)` each field goes at the next offset that is a multiple of its alignment, and the size is rounded up to the struct's alignment, so a gap sits before any field more aligned than the offset it would otherwise take, and after the last field. Fields in declaration order: a: u8, b: [u32; N]. Reorder them widest-first, or insert explicit zeroed padding fields. Always-zero padding is not an escape: a typed copy leaves padding uninitialized however the value was built.
+  --> tests/ui/transparent_padding.rs:11:23
+   |
+11 | #[derive(Clone, Copy, Pod)]
+   |                       ^^^ evaluation of `<Inner<1> as portable_pod::Pod>::__LAYOUT_OK` failed here
+
+note: erroneous constant encountered
+  --> tests/ui/transparent_padding.rs:21:15
+   |
+21 | struct Holder(Inner<1>);
+   |               ^^^^^
+
+note: erroneous constant encountered
+  --> tests/ui/transparent_padding.rs:18:23
+   |
+18 | #[derive(Clone, Copy, Pod)]
+   |                       ^^^
+   |
+   = note: this note originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

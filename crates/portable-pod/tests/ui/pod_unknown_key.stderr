@@ -1,4 +1,4 @@
-error: unknown `#[pod]` argument `krate`. The arguments are `crate`, `size`, `align` and `shape_with`, as `#[pod(crate = ::my_crate, size = 16, align = 8, shape_with = 0x1234)]`.
+error: unknown `#[pod]` argument `krate`. The arguments are `crate`, `size`, `align`, `shape_with` and `transparent`, as `#[pod(crate = ::my_crate, size = 16, align = 8, shape_with = 0x1234)]` or `#[pod(transparent)]`.
  --> tests/ui/pod_unknown_key.rs:4:23
   |
 4 | #[derive(Clone, Copy, Pod)]

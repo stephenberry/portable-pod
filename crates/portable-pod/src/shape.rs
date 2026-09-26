@@ -30,7 +30,9 @@
 //! change, and changing what it means should come with a new name anyway.
 //!
 //! So reordering, renaming or retyping a field changes the shape even where the size does not,
-//! and so does wrapping a field in a newtype (`u64` to `Tick(u64)`). Renaming a *type* does not:
+//! and so does wrapping a field in a newtype (`u64` to `Tick(u64)`), unless the newtype derives
+//! with `#[pod(transparent)]`, whose shape is its field's exactly
+//! ([Transparent newtypes](crate#transparent-newtypes)). Renaming a *type* does not:
 //! `struct Tick(u64)` and `struct Money(u64)` have the same shape, because a rename must not
 //! invalidate every save file that stored one. A field whose type is `Money` where it used to be
 //! `Tick` is therefore not detected; give such types a [`shape_with`](#extending-a-derived-shape)

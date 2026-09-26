@@ -86,6 +86,9 @@ pub struct Input {
     pub align: Option<Pin>,
     /// The expression from `#[pod(shape_with = ...)]`, if given: a `u64` folded into the shape.
     pub shape_with: Option<Pin>,
+    /// The `transparent` in `#[pod(transparent)]`, if given: the type is exactly one field, and its
+    /// shape is that field's. `parse` has checked that there is one field and no `shape_with`.
+    pub transparent: Option<Span>,
 }
 
 /// A `size`, `align` or `shape_with` value: a constant expression, captured uninspected like a
@@ -240,11 +243,13 @@ struct PodArgs {
     size: Option<Pin>,
     align: Option<Pin>,
     shape_with: Option<Pin>,
+    transparent: Option<Span>,
 }
 
 /// The arguments `#[pod(...)]` accepts, spelled out for every diagnostic that lists them.
-const POD_ARGS: &str = "`crate`, `size`, `align` and `shape_with`, as \
-     `#[pod(crate = ::my_crate, size = 16, align = 8, shape_with = 0x1234)]`";
+const POD_ARGS: &str = "`crate`, `size`, `align`, `shape_with` and `transparent`, as \
+     `#[pod(crate = ::my_crate, size = 16, align = 8, shape_with = 0x1234)]` or \
+     `#[pod(transparent)]`";
 
 /// Parse one `#[pod(...)]` attribute's arguments.
 ///
@@ -252,7 +257,7 @@ const POD_ARGS: &str = "`crate`, `size`, `align` and `shape_with`, as \
 /// is rooted at it, so this is what lets a crate re-export `Pod` and have the derive keep working
 /// through the re-export. `size` and `align` each take a `usize` constant expression, pinning the
 /// layout the type must have. `shape_with` takes a `u64` constant expression, folded into the
-/// type's shape.
+/// type's shape. `transparent` takes no value; `parse` checks what it requires of the struct.
 fn parse_pod_attr(head: &Ident, args: Option<&TokenTree>, seen: &mut PodArgs) -> Result<(), Error> {
     let Some(TokenTree::Group(g)) = args else {
         return Err(Error::new(
@@ -271,6 +276,22 @@ fn parse_pod_attr(head: &Ident, args: Option<&TokenTree>, seen: &mut PodArgs) ->
                 ),
             ));
         };
+        if is(key, "transparent") {
+            if arg.len() > 1 {
+                return Err(Error::new(
+                    arg[1].span(),
+                    "`transparent` takes no value: write `#[pod(transparent)]`.",
+                ));
+            }
+            if seen.transparent.is_some() {
+                return Err(Error::new(
+                    key.span(),
+                    "`transparent` is given more than once; keep a single `#[pod(transparent)]`.",
+                ));
+            }
+            seen.transparent = Some(key.span());
+            continue;
+        }
         let wanted = if is(key, "crate") {
             "a path: write `#[pod(crate = ::my_crate)]`"
         } else if is(key, "size") {
@@ -686,6 +707,16 @@ pub fn parse(ts: TokenStream) -> Result<Input, Error> {
         where_toks.pop();
     }
 
+    if let Some(at) = pod.transparent {
+        check_transparent(
+            &name,
+            at,
+            &fields,
+            &generics.consts,
+            pod.shape_with.as_ref(),
+        )?;
+    }
+
     let is_concrete = generics.decl.is_empty();
     Ok(Input {
         name,
@@ -699,5 +730,63 @@ pub fn parse(ts: TokenStream) -> Result<Input, Error> {
         size: pod.size,
         align: pod.align,
         shape_with: pod.shape_with,
+        transparent: pod.transparent,
+    })
+}
+
+/// What `#[pod(transparent)]` requires: exactly one field, which the type's shape then *is*.
+///
+/// The attribute says the newtype and its field are one thing to anything that reads a shape, so
+/// everything the fold would otherwise add on top of the field is refused rather than dropped:
+/// a second field (even a zero-sized one, whose name the fold would record), a `shape_with`, and a
+/// const parameter the field's type does not mention (`Fixed<32>` and `Fixed<24>` would share a
+/// shape the default derive tells apart). DESIGN.md §13.
+fn check_transparent(
+    name: &Ident,
+    at: Span,
+    fields: &[Field],
+    consts: &[Ident],
+    shape_with: Option<&Pin>,
+) -> Result<(), Error> {
+    let [field] = fields else {
+        return Err(Error::new(
+            at,
+            format!(
+                "`#[pod(transparent)]` gives `{name}` the shape of its one field, so it needs \
+                 exactly one field, and `{name}` has {}. Remove `transparent` to derive a struct \
+                 shape from all of them.",
+                fields.len()
+            ),
+        ));
+    };
+    if let Some(with) = shape_with {
+        return Err(Error::new(
+            with.span,
+            format!(
+                "`shape_with` cannot extend a `#[pod(transparent)]` shape: `transparent` makes \
+                 `{name}`'s shape exactly its field's. Remove `transparent` to fold this value \
+                 into a struct shape instead."
+            ),
+        ));
+    }
+    if let Some(unused) = consts.iter().find(|c| !mentions(&field.ty, &c.to_string())) {
+        return Err(Error::new(
+            unused.span(),
+            format!(
+                "`#[pod(transparent)]` gives `{name}` exactly its field's shape, and the field's \
+                 type does not mention the const parameter `{unused}`, so every `{unused}` would \
+                 share one shape. Remove `transparent` to fold `{unused}` into a struct shape."
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Does `ts` contain the identifier `id`, at any depth?
+fn mentions(ts: &TokenStream, id: &str) -> bool {
+    ts.clone().into_iter().any(|t| match t {
+        TokenTree::Ident(i) => i.to_string() == id,
+        TokenTree::Group(g) => mentions(&g.stream(), id),
+        _ => false,
     })
 }

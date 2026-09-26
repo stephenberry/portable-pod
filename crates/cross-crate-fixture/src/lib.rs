@@ -6,6 +6,9 @@
 //! by spelling, so the caller's field was never bounded `Pod` and never shaped: a non-`Pod` field
 //! was accepted in a `Pod` struct. `tests/cross_crate.rs` and `tests/ui/cross_crate_non_pod_field.rs`
 //! in `portable-pod` are the regression tests.
+//!
+//! `wrap!` declares a `#[pod(transparent)]` newtype over a type its caller names, so a caller's
+//! `$crate::Header` must be the type whose shape the newtype forwards.
 
 pub use portable_pod::{Pod, read_pod};
 // Under its own name: whether `portable_pod::Pod` also brings the derive depends on features that
@@ -29,5 +32,22 @@ macro_rules! record {
             pub head: $crate::Header,
             $($r)*
         }
+    };
+}
+
+/// A transparent newtype declared here: its shape is `u32`'s.
+#[derive(Clone, Copy, DerivePod)]
+#[repr(transparent)]
+#[pod(transparent)]
+pub struct Id(pub u32);
+
+/// `wrap!(Name(Type))` declares `Name` as a `#[pod(transparent)]` newtype over `Type`.
+#[macro_export]
+macro_rules! wrap {
+    ($n:ident($t:ty)) => {
+        #[derive(Clone, Copy, $crate::DerivePod)]
+        #[repr(transparent)]
+        #[pod(crate = $crate, transparent)]
+        pub struct $n(pub $t);
     };
 }

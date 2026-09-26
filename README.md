@@ -168,6 +168,19 @@ assert_ne!(V1::SHAPE, V2::SHAPE);
 
 The derive folds in each field's name and type in order, each const generic parameter's value, and the size; `#[pod(shape_with = <u64>)]` adds anything else, such as the variant table of an enum stored as an integer. A type's own name is left out so that renaming it does not invalidate stored data, which means `Tick(u64)` and `Money(u64)` share a shape. A hand-written impl reports `None` unless it computes one, and `None` spreads to anything containing it.
 
+A newtype that is a compile-time distinction only, such as a typed ID whose bytes mean exactly what its field's do, can take its field's shape instead with `#[pod(transparent)]`, so that retyping a field from `u32` to `UserId(u32)` keeps old data readable. It is opt-in because it changes the newtype's shape from the struct shape it has without it:
+
+```rust
+use portable_pod::Pod;
+
+#[derive(Clone, Copy, Pod)]
+#[repr(transparent)]
+#[pod(transparent)]
+struct UserId(u32);
+
+assert_eq!(UserId::SHAPE, u32::SHAPE);
+```
+
 The value is the same on every target and is a persistence format: the algorithm is documented exactly in the `shape` module and changes only in a semver-major release.
 
 One thing to know when upgrading: if a trait of yours also has an associated item named `SHAPE`, `T::SHAPE` becomes ambiguous (error E0034) in generic code bounded by both traits, or on a type that implements both while both traits are in scope. Write `<T as MyTrait>::SHAPE`.

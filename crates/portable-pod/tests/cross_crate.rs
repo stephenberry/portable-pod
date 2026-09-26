@@ -65,3 +65,25 @@ fn it_round_trips() {
     let back = cross_crate_fixture::read_pod::<Out>(portable_pod::bytes_of(&out)).unwrap();
     assert_eq!((back.head.id, back.body.tag), (1, 2));
 }
+
+// The transparent half: `wrap!` is the other crate's macro, and the type it wraps is this crate's
+// `$crate::Header`, so the newtype's shape is this crate's `Header`'s, not the fixture's.
+macro_rules! wrapped {
+    () => {
+        cross_crate_fixture::wrap!(Wrapped($crate::Header));
+    };
+}
+wrapped!();
+
+#[test]
+fn a_transparent_newtype_from_another_crates_macro_forwards_the_callers_type() {
+    assert_eq!(Wrapped::SHAPE, Header::SHAPE);
+    assert_ne!(Wrapped::SHAPE, cross_crate_fixture::Header::SHAPE);
+    assert_eq!(cross_crate_fixture::Id::SHAPE, u32::SHAPE);
+
+    let w = Wrapped(Header { tag: 3 });
+    let back = cross_crate_fixture::read_pod::<Wrapped>(portable_pod::bytes_of(&w)).unwrap();
+    assert_eq!(back.0.tag, 3);
+    let id = cross_crate_fixture::read_pod::<cross_crate_fixture::Id>(&7u32.to_le_bytes()).unwrap();
+    assert_eq!(id.0, 7);
+}

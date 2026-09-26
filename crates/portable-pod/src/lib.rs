@@ -183,6 +183,36 @@
 //! documented exactly in [`shape`], changes only in a semver-major release. A type's own name is
 //! not part of it, so renaming a type does not invalidate stored data.
 //!
+//! # Transparent newtypes
+//!
+//! A newtype is a struct like any other, so `struct UserId(u32)` has the shape of a struct with
+//! one field named `0`, not `u32`'s, and retyping a field from `u32` to `UserId` refuses bytes
+//! written before. For a newtype that is a compile-time distinction only, whose bytes mean
+//! exactly what its field's do, `#[pod(transparent)]` says so, and the newtype's shape is its
+//! field's:
+//!
+//! ```
+//! use portable_pod::Pod;
+//!
+//! #[derive(Clone, Copy, Pod)]
+//! #[repr(transparent)]
+//! #[pod(transparent)]
+//! struct UserId(u32);
+//!
+//! assert_eq!(UserId::SHAPE, u32::SHAPE);
+//! ```
+//!
+//! It takes a struct with exactly one field, `repr(transparent)` or `repr(C)`, and is refused
+//! beside `shape_with` or on a type with a const parameter the field's type does not mention,
+//! since each would add something the field's shape does not have. The layout proof is the usual
+//! one. Leave it off a newtype whose wrapping *changes* meaning: with it, a field retyped between
+//! `u64` and a `Tick(u64)` is not detected.
+//!
+//! **It is opt-in, and it changes the type's shape.** Without the attribute a newtype keeps the
+//! struct shape it has always had, which is what existing files were written with, so adding the
+//! attribute to a type already in use, or removing it, is a format change for that type and every
+//! type containing it.
+//!
 //! # What "portable" does and does not mean
 //!
 //! The guarantee is about **layout**: size, field offsets, the absence of padding, and the
@@ -317,7 +347,7 @@ pub use boxed::{boxed_zeroed, boxed_zeroed_with};
 /// It also fills in [`Pod::SHAPE`] from the fields' names and shapes and any const generic
 /// parameters; see [`shape`] for exactly what that covers.
 ///
-/// Accepts one attribute, `#[pod(...)]`, with four optional arguments:
+/// Accepts one attribute, `#[pod(...)]`, with five optional arguments:
 ///
 /// * `crate = <path>` names the path that exports [`Pod`] when it is reached through a re-export
 ///   rather than as `::portable_pod`.
@@ -325,6 +355,8 @@ pub use boxed::{boxed_zeroed, boxed_zeroed_with};
 ///   change fails the build. See [Pinning the layout](crate#pinning-the-layout).
 /// * `shape_with = <expr>` folds one more `u64` constant into [`Pod::SHAPE`]. See
 ///   [Extending a derived shape](shape#extending-a-derived-shape).
+/// * `transparent` gives a one-field newtype its field's [`Pod::SHAPE`]. See
+///   [Transparent newtypes](crate#transparent-newtypes).
 #[cfg(feature = "derive")]
 pub use portable_pod_derive::Pod;
 

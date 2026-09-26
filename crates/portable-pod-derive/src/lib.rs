@@ -186,6 +186,14 @@ fn rooted_at(
 /// meaning the fields cannot express, such as the variant table of an enum whose discriminant a
 /// wrapper stores as an integer. On a generic type it may name the type's parameters.
 ///
+/// # Forwarding a newtype's shape
+///
+/// `#[pod(transparent)]` on a one-field struct gives it that field's `Pod::SHAPE`, rather than the
+/// shape of a struct with one field: a newtype that is a compile-time distinction only (a typed
+/// ID, a unit) and whose bytes mean the same as its field's. It is refused on any other struct,
+/// beside `shape_with`, and on a type with a const parameter the field's type does not mention.
+/// It is opt-in because it changes the type's shape: see the crate docs, "Transparent newtypes".
+///
 /// # Padding must be eliminated, not excused
 ///
 /// There is no opt-out. An earlier version of this crate offered
@@ -365,15 +373,32 @@ fn expand(input: &parse::Input) -> TokenStream {
         }
         s
     };
-    let msg = format!(
-        "`{name}` has padding, so it cannot be `Pod`: `size_of::<{name}>()` exceeds the sum of its \
-         field sizes, and reading a padding byte observes uninitialized memory. Under `repr(C)` \
-         each field goes at the next offset that is a multiple of its alignment, and the size is \
-         rounded up to the struct's alignment, so a gap sits before any field more aligned than \
-         the offset it would otherwise take, and after the last field. {listing}. Reorder them \
-         widest-first, or insert explicit zeroed padding fields. Always-zero padding is not an \
-         escape: a typed copy leaves padding uninitialized however the value was built."
-    );
+    let msg = if input.transparent.is_some() {
+        // One field at offset 0, so the only possible gap is a tail from a raised alignment, and
+        // the usual advice (reorder, or add a padding field) does not apply: `transparent` allows
+        // exactly one field.
+        let field = &input.fields[0];
+        format!(
+            "`{name}` has padding, so it cannot be `Pod`: `size_of::<{name}>()` exceeds the size \
+             of its one field, `{label}: {ty}`, and reading a padding byte observes uninitialized \
+             memory. A one-field struct is larger than its field only when its `repr(align)` \
+             raises the alignment above the field's, which pads the tail. Remove the `align`, or \
+             drop `#[pod(transparent)]` and fill the gap with explicit zeroed padding fields.",
+            label = field.label,
+            ty = field.ty,
+        )
+    } else {
+        format!(
+            "`{name}` has padding, so it cannot be `Pod`: `size_of::<{name}>()` exceeds the sum of \
+             its field sizes, and reading a padding byte observes uninitialized memory. Under \
+             `repr(C)` each field goes at the next offset that is a multiple of its alignment, and \
+             the size is rounded up to the struct's alignment, so a gap sits before any field more \
+             aligned than the offset it would otherwise take, and after the last field. \
+             {listing}. Reorder them widest-first, or insert explicit zeroed padding fields. \
+             Always-zero padding is not an escape: a typed copy leaves padding uninitialized \
+             however the value was built."
+        )
+    };
 
     // The message goes in as the argument to `"{}"`, never as the format string itself. It embeds
     // each field's type as written, and a type can contain braces (`Inline<{ K }>`) that a format
@@ -471,6 +496,9 @@ fn expand(input: &parse::Input) -> TokenStream {
 ///     .finish(size_of::<Self>());
 /// ```
 ///
+/// Under `#[pod(transparent)]` it is the one field's shape instead, `<Field as Pod>::SHAPE`, with
+/// nothing folded around it (DESIGN.md §13).
+///
 /// (Every path in the real expansion is absolute, `::core::primitive::u64` and so on, so a
 /// `type u64 = u32;` in the user's scope changes nothing; `shadowed_names` in `tests/shape.rs`.)
 ///
@@ -494,7 +522,12 @@ fn expand(input: &parse::Input) -> TokenStream {
 /// Each projection is respanned onto its field, where the field bound and the transitive proof in
 /// `expand` also land, so rustc reports a field type that is not `Pod` at the field.
 fn shape(input: &parse::Input, root: &TokenStream, proof: TokenStream) -> TokenStream {
-    let value = fold(input, root);
+    let value = if input.transparent.is_some() {
+        // `parse` has refused anything but exactly one field, and a `shape_with` beside it.
+        field_shape(input, &input.fields[0])
+    } else {
+        fold(input, root)
+    };
 
     // `unused_parens` is for a `shape_with` the user had to parenthesise (`(1 << 4)`), as for the
     // pins.

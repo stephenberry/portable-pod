@@ -1,0 +1,7 @@
+error: `#[pod(transparent)]` gives `Span` the shape of its one field, so it needs exactly one field, and `Span` has 2. Remove `transparent` to derive a struct shape from all of them.
+ --> tests/ui/transparent_two_fields.rs:5:23
+  |
+5 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)
