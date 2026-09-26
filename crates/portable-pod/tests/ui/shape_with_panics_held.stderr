@@ -1,0 +1,25 @@
+error[E0080]: evaluation panicked: not written yet
+  --> tests/ui/shape_with_panics_held.rs:13:20
+   |
+13 | #[pod(shape_with = unfinished_variant_table())]
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<Stored as portable_pod::Pod>::SHAPE` failed inside this call
+   |
+note: inside `unfinished_variant_table`
+  --> tests/ui/shape_with_panics_held.rs:8:5
+   |
+ 8 |     panic!("not written yet")
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+
+note: erroneous constant encountered
+  --> tests/ui/shape_with_panics_held.rs:21:12
+   |
+21 |     inner: Stored,
+   |            ^^^^^^
+
+note: erroneous constant encountered
+  --> tests/ui/shape_with_panics_held.rs:18:23
+   |
+18 | #[derive(Clone, Copy, Pod)]
+   |                       ^^^
+   |
+   = note: this note originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

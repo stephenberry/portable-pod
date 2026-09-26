@@ -651,9 +651,10 @@ mod transparent {
     }
 }
 
-/// `SHAPE` is evaluated only where something reads it, for a concrete type as for a generic one. A
-/// `shape_with` that panics when evaluated fails a program that reads the shape and no other, and
-/// a type whose impl is unconditional (DESIGN.md §3) must not change that by forcing its shape.
+/// `SHAPE` is evaluated only where something names it, for a concrete type as for a generic one. A
+/// `shape_with` that panics when evaluated fails a program that reads the shape, and a type whose
+/// impl is unconditional (DESIGN.md §3) must not change that by forcing its shape. A derived struct
+/// holding `Stored` names its shape and fails, as through 0.2.0: `tests/ui/shape_with_panics_held.rs`.
 mod lazy_shape {
     use super::*;
 

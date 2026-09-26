@@ -500,8 +500,10 @@ fn expand(input: &parse::Input) -> TokenStream {
 ///   derive (§5.1). Forcing `__LAYOUT_OK` here would be redundant, since a shape is only useful
 ///   beside bytes an entry point produced and every entry point forces it, and it would add a
 ///   second "erroneous constant" trail to every padding diagnostic. Nor does anything force this
-///   const: it is evaluated only where something names it, so a `shape_with` that cannot be
-///   evaluated fails only a program that reads the shape.
+///   const: it is evaluated only where something names it. That includes the `SHAPE` of a concrete
+///   type holding this one, since rustc evaluates the constants a concrete body names at its
+///   definition, so a `shape_with` that cannot be evaluated fails a program that reads the shape
+///   or holds the type in another derived struct, as it did through 0.2.0, and no other.
 ///
 /// Each projection is respanned onto its field, where the field bound and the transitive proof in
 /// `expand` also land, so rustc reports a field type that is not `Pod` at the field.
