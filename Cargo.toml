@@ -5,7 +5,7 @@ members = ["crates/portable-pod", "crates/portable-pod-derive", "crates/cross-cr
 [workspace.package]
 edition = "2024"
 # The runtime's version. The derive has its own; see `portable-pod-derive` below.
-version = "0.1.6"
+version = "0.1.7"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/stephenberry/portable-pod"
 rust-version = "1.96"
@@ -18,4 +18,4 @@ authors = ["Stephen Berry"]
 # version the older runtimes' requirements do not admit: runtime 0.1.4 asks for `^0.1.4`, so the
 # derive that emits `SHAPE` is 0.2.0. A release edits three lines: the runtime's `version` above,
 # the derive's `version`, and this requirement. README "Versions" and DESIGN.md §12.
-portable-pod-derive = { path = "crates/portable-pod-derive", version = "=0.2.0" }
+portable-pod-derive = { path = "crates/portable-pod-derive", version = "=0.2.1" }

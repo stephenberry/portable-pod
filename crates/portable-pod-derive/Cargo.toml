@@ -5,7 +5,7 @@ readme = "../../README.md"
 edition.workspace = true
 # Not the workspace version: the derive is versioned on its own, and the runtime pins it with `=`.
 # See `[workspace.dependencies]` in the root manifest.
-version = "0.2.0"
+version = "0.2.1"
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true

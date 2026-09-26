@@ -244,7 +244,7 @@ CI asserts this in all three configurations, so it cannot quietly regress: `carg
 
 `portable-pod` and `portable-pod-derive` are released together and must be used together: each runtime release depends on exactly one derive version (`=`), because the derive's expansion names items of the runtime it ships with. Depend on `portable-pod` only and let it choose the derive; never add or update `portable-pod-derive` on its own.
 
-The two carry different version numbers. The derive that emits `Pod::SHAPE` is 0.2.0, first paired with runtime 0.1.5, so that a project still on runtime 0.1.4, which accepts any `0.1.x` derive, cannot be moved onto it by `cargo update -p portable-pod-derive` or a bot and fail to compile.
+The two carry different version numbers. The derive that emits `Pod::SHAPE` is 0.2.0, first paired with runtime 0.1.5, so that a project still on runtime 0.1.4, which accepts any `0.1.x` derive, cannot be moved onto it by `cargo update -p portable-pod-derive` or a bot and fail to compile. The current pair is `portable-pod` 0.1.7 with `portable-pod-derive` 0.2.1.
 
 ## License
 
