@@ -738,9 +738,13 @@ pub fn parse(ts: TokenStream) -> Result<Input, Error> {
 ///
 /// The attribute says the newtype and its field are one thing to anything that reads a shape, so
 /// everything the fold would otherwise add on top of the field is refused rather than dropped:
-/// a second field (even a zero-sized one, whose name the fold would record), a `shape_with`, and a
-/// const parameter the field's type does not mention (`Fixed<32>` and `Fixed<24>` would share a
-/// shape the default derive tells apart). DESIGN.md §13.
+/// a second field (even a zero-sized one, whose name the fold would record), a `shape_with`, and
+/// any const parameter. The default derive folds a const parameter's value in, so `Fixed<32>` and
+/// `Fixed<24>` have different shapes; forwarding keeps them apart only if the field's shape
+/// depends on the parameter, and that cannot be decided from tokens: `Ignore<N>` may be an alias
+/// that discards `N`, and a block `{ N }` may name a different `N`. So every const parameter is
+/// refused, including one the field plainly uses. Allowing some later is compatible; refusing
+/// some that are accepted now would not be. DESIGN.md §13.
 fn check_transparent(
     name: &Ident,
     at: Span,
@@ -748,7 +752,7 @@ fn check_transparent(
     consts: &[Ident],
     shape_with: Option<&Pin>,
 ) -> Result<(), Error> {
-    let [field] = fields else {
+    if fields.len() != 1 {
         return Err(Error::new(
             at,
             format!(
@@ -758,7 +762,7 @@ fn check_transparent(
                 fields.len()
             ),
         ));
-    };
+    }
     if let Some(with) = shape_with {
         return Err(Error::new(
             with.span,
@@ -769,24 +773,16 @@ fn check_transparent(
             ),
         ));
     }
-    if let Some(unused) = consts.iter().find(|c| !mentions(&field.ty, &c.to_string())) {
+    if let Some(param) = consts.first() {
         return Err(Error::new(
-            unused.span(),
+            param.span(),
             format!(
-                "`#[pod(transparent)]` gives `{name}` exactly its field's shape, and the field's \
-                 type does not mention the const parameter `{unused}`, so every `{unused}` would \
-                 share one shape. Remove `transparent` to fold `{unused}` into a struct shape."
+                "`#[pod(transparent)]` does not take a type with a const parameter: `{name}`'s \
+                 shape would be its field's, which need not depend on `{param}`, so values of \
+                 `{param}` that the default derive tells apart could share one shape. Remove \
+                 `transparent` to fold `{param}` into a struct shape."
             ),
         ));
     }
     Ok(())
-}
-
-/// Does `ts` contain the identifier `id`, at any depth?
-fn mentions(ts: &TokenStream, id: &str) -> bool {
-    ts.clone().into_iter().any(|t| match t {
-        TokenTree::Ident(i) => i.to_string() == id,
-        TokenTree::Group(g) => mentions(&g.stream(), id),
-        _ => false,
-    })
 }

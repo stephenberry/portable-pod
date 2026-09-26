@@ -299,11 +299,6 @@ mod transparent {
     #[derive(Clone, Copy, Pod)]
     #[repr(transparent)]
     #[pod(transparent)]
-    pub struct Lanes<const N: usize>(pub [u16; N]);
-
-    #[derive(Clone, Copy, Pod)]
-    #[repr(transparent)]
-    #[pod(transparent)]
     pub struct Hidden(pub Opaque);
 
     /// The same record, once with a `u64` field and once with the newtype in its place.
@@ -337,8 +332,6 @@ fn a_transparent_shape_is_its_fields() {
     assert_eq!(Meters::SHAPE, u32::SHAPE);
     assert_eq!(Framed::SHAPE, Header::SHAPE);
     assert_eq!(Wrapper::<Wrapper<Header>>::SHAPE, Header::SHAPE);
-    assert_eq!(Lanes::<3>::SHAPE, <[u16; 3]>::SHAPE);
-    assert_ne!(Lanes::<3>::SHAPE, Lanes::<4>::SHAPE);
     assert_eq!(Hidden::SHAPE, None, "`None` forwards like anything else");
     // So a field retyped to a transparent newtype of its old type keeps the record's shape.
     assert_eq!(Typed::SHAPE, Raw::SHAPE);

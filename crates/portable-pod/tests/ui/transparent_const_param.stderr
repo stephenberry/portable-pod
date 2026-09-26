@@ -1,0 +1,23 @@
+error: `#[pod(transparent)]` does not take a type with a const parameter: `Fixed`'s shape would be its field's, which need not depend on `FRAC`, so values of `FRAC` that the default derive tells apart could share one shape. Remove `transparent` to fold `FRAC` into a struct shape.
+ --> tests/ui/transparent_const_param.rs:9:23
+  |
+9 | #[derive(Clone, Copy, Pod)]
+  |                       ^^^
+  |
+  = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `#[pod(transparent)]` does not take a type with a const parameter: `Aliased`'s shape would be its field's, which need not depend on `N`, so values of `N` that the default derive tells apart could share one shape. Remove `transparent` to fold `N` into a struct shape.
+  --> tests/ui/transparent_const_param.rs:14:23
+   |
+14 | #[derive(Clone, Copy, Pod)]
+   |                       ^^^
+   |
+   = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `#[pod(transparent)]` does not take a type with a const parameter: `Lanes`'s shape would be its field's, which need not depend on `N`, so values of `N` that the default derive tells apart could share one shape. Remove `transparent` to fold `N` into a struct shape.
+  --> tests/ui/transparent_const_param.rs:19:23
+   |
+19 | #[derive(Clone, Copy, Pod)]
+   |                       ^^^
+   |
+   = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)

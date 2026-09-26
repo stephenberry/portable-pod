@@ -203,8 +203,8 @@
 //! ```
 //!
 //! It takes a struct with exactly one field, `repr(transparent)` or `repr(C)`, and is refused
-//! beside `shape_with` or on a type with a const parameter the field's type does not mention,
-//! since each would add something the field's shape does not have. The layout proof is the usual
+//! beside `shape_with` or on a type with a const parameter, since each could add something the
+//! field's shape does not have. The layout proof is the usual
 //! one. Leave it off a newtype whose wrapping *changes* meaning: with it, a field retyped between
 //! `u64` and a `Tick(u64)` is not detected.
 //!

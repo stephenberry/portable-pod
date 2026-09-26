@@ -611,12 +611,6 @@ mod transparent {
     #[pod(transparent)]
     struct Wrapper<T>(T);
 
-    /// A const parameter the field's type mentions, so it reaches the shape through the field.
-    #[derive(Clone, Copy, PartialEq, Debug, Pod)]
-    #[repr(transparent)]
-    #[pod(transparent)]
-    struct Lanes<const N: usize>([u16; N]);
-
     #[test]
     fn a_transparent_newtype_is_its_field_in_bytes() {
         let t = Tick(0x0102_0304_0506_0708);
@@ -635,10 +629,6 @@ mod transparent {
         let w = Wrapper(Wrapper(Pair(3, 4)));
         assert_eq!(bytes_of(&w), bytes_of(&Pair(3, 4)));
         assert_eq!(read_pod::<Wrapper<Wrapper<Pair>>>(bytes_of(&w)), Some(w));
-
-        let l = Lanes([1u16, 2, 3]);
-        assert_eq!(bytes_of(&l).len(), 6);
-        assert_eq!(zeroed::<Lanes<5>>(), Lanes([0; 5]));
     }
 
     /// A contained padded instantiation is refused through a transparent newtype as through any

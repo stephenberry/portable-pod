@@ -190,8 +190,9 @@ fn rooted_at(
 ///
 /// `#[pod(transparent)]` on a one-field struct gives it that field's `Pod::SHAPE`, rather than the
 /// shape of a struct with one field: a newtype that is a compile-time distinction only (a typed
-/// ID, a unit) and whose bytes mean the same as its field's. It is refused on any other struct,
-/// beside `shape_with`, and on a type with a const parameter the field's type does not mention.
+/// ID, a unit) and whose bytes mean the same as its field's. It takes `repr(transparent)` or
+/// `repr(C)`, and is refused on any other struct, beside `shape_with`, and on a type with a const
+/// parameter.
 /// It is opt-in because it changes the type's shape: see the crate docs, "Transparent newtypes".
 ///
 /// # Padding must be eliminated, not excused
