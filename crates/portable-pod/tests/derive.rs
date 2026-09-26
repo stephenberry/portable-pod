@@ -660,3 +660,28 @@ mod transparent {
         assert_eq!(read_pod::<Outer>(bytes_of(&o)), Some(o));
     }
 }
+
+/// `SHAPE` is evaluated only where something reads it, for a concrete type as for a generic one. A
+/// `shape_with` that panics when evaluated fails a program that reads the shape and no other, and
+/// a type whose impl is unconditional (DESIGN.md §3) must not change that by forcing its shape.
+mod lazy_shape {
+    use super::*;
+
+    const fn unfinished_variant_table() -> u64 {
+        panic!("not written yet")
+    }
+
+    #[derive(Clone, Copy, PartialEq, Debug, Pod)]
+    #[repr(C)]
+    #[pod(shape_with = unfinished_variant_table())]
+    struct Stored {
+        a: u32,
+    }
+
+    #[test]
+    fn a_shape_nothing_reads_is_never_evaluated() {
+        let s = Stored { a: 7 };
+        assert_eq!(read_pod::<Stored>(bytes_of(&s)), Some(s));
+        assert_eq!(bytes_of(&zeroed::<Stored>()).len(), 4);
+    }
+}

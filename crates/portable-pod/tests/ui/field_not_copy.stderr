@@ -15,27 +15,6 @@ note: required by a bound in `Pod`
   | pub unsafe trait Pod: Copy + 'static {
   |                       ^^^^ required by this bound in `Pod`
 
-error[E0277]: the trait bound `Owned: Copy` is not satisfied
- --> tests/ui/field_not_copy.rs:2:10
-  |
-2 | #[derive(Pod)]
-  |          ^^^ unsatisfied trait bound
-  |
-help: the trait `Copy` is not implemented for `Owned`
- --> tests/ui/field_not_copy.rs:4:1
-  |
-4 | struct Owned {
-  | ^^^^^^^^^^^^
-note: required by a bound in `SHAPE`
- --> $DIR/src/lib.rs
-  |
-  | pub unsafe trait Pod: Copy + 'static {
-  |                       ^^^^ required by this bound in `Pod::SHAPE`
-...
-  |     const SHAPE: Option<u64> = None;
-  |           ----- required by a bound in this associated constant
-  = note: this error originates in the derive macro `Pod` (in Nightly builds, run with -Z macro-backtrace for more info)
-
 error[E0277]: `String` is not `Pod`, so its bytes are not portable across machines
  --> tests/ui/field_not_copy.rs:5:11
   |

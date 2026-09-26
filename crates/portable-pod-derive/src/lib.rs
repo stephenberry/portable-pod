@@ -421,40 +421,22 @@ fn expand(input: &parse::Input) -> TokenStream {
         checks.extend(pin_check(input, Pinned::Align, pin));
     }
 
-    // Where the per-field proofs go: into `__LAYOUT_OK` for a generic type, and into `SHAPE` for a
-    // concrete one, which `__LAYOUT_OK` then forces.
+    // `const __LAYOUT_OK: () = { <inherit> <checks> };`
     //
-    // A concrete type has no field bounds, so every body that names `<Field as Pod>` reports a
-    // field that is not `Pod`, and `SHAPE` has to name each field's shape. rustc reports one
-    // failed obligation once per body, not once per program: with the inherited proofs in
-    // `__LAYOUT_OK`, the field was reported twice, identically. With them in `SHAPE`, beside the
-    // shape projections, both mentions land on the field's span in one body and are reported once.
-    // Forcing `SHAPE` from `__LAYOUT_OK` keeps `__LAYOUT_OK` the whole transitive proof it is for
-    // every other type. The shape is then evaluated at every concrete definition, which DESIGN.md
-    // §12 measured as free, and the padding diagnostics are unchanged: the forcing is spanned at
-    // the derive, where their trail already points.
-    //
-    // A generic type keeps `SHAPE` free of proofs. Its field bounds make every body well-formed,
-    // and a shape read of an instantiation must not become a layout check (§12).
-    //
-    // `const __LAYOUT_OK: () = { <inherit, or the forced SHAPE> <checks> };`
-    let (mut proof, shape_proof) = if input.is_concrete {
-        (
-            rooted(
-                "let _: ::core::option::Option<::core::primitive::u64> = <Self as",
-                root,
-                "::Pod>::SHAPE;",
-            ),
-            inherit,
-        )
-    } else {
-        (inherit, TokenStream::new())
-    };
+    // A concrete type now names each field `Pod` in two bodies, this one and `SHAPE`'s, with no
+    // bound to discharge either, so both report a field that is not `Pod`. The two diagnostics are
+    // identical, on the field's span: rustc deduplicates them outright in a non-incremental build,
+    // and in an incremental one, whose spans carry the body they came from, emits both and cargo
+    // prints one. Moving the inherited proofs into `SHAPE` would have made that one diagnostic at
+    // the rustc level too, but `__LAYOUT_OK` would then have had to force `SHAPE` to stay the
+    // whole transitive proof, and a `SHAPE` evaluated at every definition breaks a type whose
+    // `shape_with` panics when evaluated and that nothing reads (DESIGN.md §3). `SHAPE` stays lazy.
+    let mut proof = inherit;
     proof.extend(checks);
     let mut body = lex("#[allow(clippy::let_unit_value)] const __LAYOUT_OK: () =");
     body.extend(delimit(Delimiter::Brace, proof));
     body.extend(lex(";"));
-    body.extend(shape(input, root, shape_proof));
+    body.extend(shape(input, root));
 
     let mut out = lex("#[automatically_derived] unsafe impl");
     if !decl.is_empty() {
@@ -513,15 +495,16 @@ fn expand(input: &parse::Input) -> TokenStream {
 ///   method call per field cost measurably more than one `.fields(&[..])` call (DESIGN.md §12).
 ///   Each field has its own projection, never one shared by fields spelled alike: see the bounds
 ///   in `expand` for why that sharing was unsound.
-/// * **No assertion.** A const panic site costs compile time at every derive (§5.1). For a generic
-///   type there is no layout proof in it either: a shape read of an instantiation is not a layout
-///   check, and every entry point forces the proof anyway. For a concrete type, `proof` is the
-///   fields' inherited proofs, which `expand` puts here so that each field is named `Pod` in one
-///   body only; see there.
+/// * **No assertion, and no forced layout proof.** A const panic site costs compile time at every
+///   derive (§5.1). Forcing `__LAYOUT_OK` here would be redundant, since a shape is only useful
+///   beside bytes an entry point produced and every entry point forces it, and it would add a
+///   second "erroneous constant" trail to every padding diagnostic. Nor does anything force this
+///   const: it is evaluated only where something names it, so a `shape_with` that cannot be
+///   evaluated fails only a program that reads the shape.
 ///
 /// Each projection is respanned onto its field, where the field bound and the transitive proof in
 /// `expand` also land, so rustc reports a field type that is not `Pod` at the field.
-fn shape(input: &parse::Input, root: &TokenStream, proof: TokenStream) -> TokenStream {
+fn shape(input: &parse::Input, root: &TokenStream) -> TokenStream {
     let value = if input.transparent.is_some() {
         // `parse` has refused anything but exactly one field, and a `shape_with` beside it.
         field_shape(input, &input.fields[0])
@@ -531,15 +514,9 @@ fn shape(input: &parse::Input, root: &TokenStream, proof: TokenStream) -> TokenS
 
     // `unused_parens` is for a `shape_with` the user had to parenthesise (`(1 << 4)`), as for the
     // pins.
-    let mut ts = lex("#[allow(unused_parens, clippy::let_unit_value)] \
+    let mut ts = lex("#[allow(unused_parens)] \
          const SHAPE: ::core::option::Option<::core::primitive::u64> =");
-    if proof.is_empty() {
-        ts.extend(value);
-    } else {
-        let mut block = proof;
-        block.extend(value);
-        ts.extend(delimit(Delimiter::Brace, block));
-    }
+    ts.extend(value);
     ts.extend(lex(";"));
     ts
 }
